@@ -1,13 +1,14 @@
 from fastapi import HTTPException, Header
 from typing import Optional
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Hardcoded secret for testing
-WEBHOOK_SECRET = "test-secret"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "test-secret")
 
 
 def verify_webhook_secret(x_webhook_secret: Optional[str] = Header(None)) -> str:
@@ -29,7 +30,6 @@ def verify_webhook_signature(x_webhook_signature: Optional[str] = Header(None)) 
         logger.warning("Missing x-webhook-signature header")
         raise HTTPException(status_code=401, detail="Missing x-webhook-signature header")
     
-    # For mock purposes, we'll just check if it matches the secret
     # In a real implementation, this would involve HMAC verification
     if x_webhook_signature != WEBHOOK_SECRET:
         logger.warning(f"Invalid webhook signature: {x_webhook_signature}")
@@ -44,9 +44,3 @@ def log_request(endpoint: str, request_body: dict, job_id: Optional[str] = None)
         logger.info(f"[{endpoint}] Job ID: {job_id}, Request: {request_body}")
     else:
         logger.info(f"[{endpoint}] Request: {request_body}")
-
-
-def generate_mock_job_id() -> str:
-    """Generate a mock job ID"""
-    import uuid
-    return f"job_{str(uuid.uuid4())[:8]}"

@@ -28,10 +28,9 @@ class WebhookRequest(BaseModel):
     jobId: str
     data: Dict[str, Any]
 
-
 class JobResponse(BaseModel):
-    job_id: str
     status: str
+    jobId: Optional[str] = None
     received: Optional[Dict[str, Any]] = None
 
 
