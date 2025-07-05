@@ -3,8 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 
-from job_routes import router as job_router
-from webhook_routes import router as webhook_router
+from routes import router
 
 # Configure logging
 logging.basicConfig(
@@ -30,8 +29,7 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(job_router)
-app.include_router(webhook_router)
+app.include_router(router)
 
 
 @app.get("/")

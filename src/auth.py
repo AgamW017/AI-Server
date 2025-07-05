@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Hardcoded secret for testing
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "test-secret")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "default-webhook-secret")
 
 
 def verify_webhook_secret(x_webhook_secret: Optional[str] = Header(None)) -> str:

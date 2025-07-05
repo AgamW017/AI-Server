@@ -1,73 +1,72 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from typing import Dict, Any
-from .models import JobCreateRequest, JobUpdateRequest, TaskApprovalRequest, JobResponse
-from .auth import verify_webhook_secret, log_request
+from models import JobCreateRequest, JobUpdateRequest, JobResponse
+from auth import verify_webhook_secret, log_request
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
-
-@router.post("/", response_model=JobResponse)
+@router.post("/")
 async def create_job(
-    job_data: JobCreateRequest,
+    jobData: JobCreateRequest,
     _: str = Depends(verify_webhook_secret)
 ):
     """Accept job data and return a job ID"""
-    request_body = job_data.dict()
-    log_request("POST /jobs", request_body)
+    log_request("POST /jobs", jobData.dict())
     
-    return JobResponse(
-        status="RECEIVED"
-    )
+    if jobData.data.type == 'VIDEO':
+        print("Processing video job with URL:", jobData.data.url)
+    
+    return Response(content="CREATED", media_type="text/plain")
 
 
 @router.post("/{jobId}/update", response_model=JobResponse)
 async def update_job(
     jobId: str,
-    update_data: JobUpdateRequest,
+    updateData: JobUpdateRequest,
     _: str = Depends(verify_webhook_secret)
 ):
     """Update job parameters"""
-    request_body = update_data.dict()
-    log_request("POST /jobs/{jobId}/update", request_body, jobId)
+    requestBody = updateData.dict()
+    log_request("POST /jobs/{jobId}/update", requestBody, jobId)
     
     return JobResponse(
         jobId=jobId,
         status="UPDATED",
-        received=request_body
+        received=requestBody
     )
 
 
 @router.post("/{jobId}/tasks/approve/start", response_model=JobResponse)
 async def approve_task_start(
     jobId: str,
-    task_data: TaskApprovalRequest,
+    taskData: JobUpdateRequest,
     _: str = Depends(verify_webhook_secret)
 ):
     """Approve task to start"""
-    request_body = task_data.dict()
-    log_request("POST /jobs/{jobId}/tasks/approve/start", request_body, jobId)
+    requestBody = taskData.dict()
+    log_request("POST /jobs/{jobId}/tasks/approve/start", requestBody, jobId)
     
     return JobResponse(
         jobId=jobId,
         status="TASK_START_APPROVED",
-        received=request_body
+        received=requestBody
     )
 
 
 @router.post("/{jobId}/tasks/approve/continue", response_model=JobResponse)
 async def approve_task_continue(
     jobId: str,
-    approval_data: TaskApprovalRequest,
+    approvalData: JobUpdateRequest,
     _: str = Depends(verify_webhook_secret)
 ):
     """Approve task completion and continue to next task"""
-    request_body = approval_data.dict()
-    log_request("POST /jobs/{jobId}/tasks/approve/continue", request_body, jobId)
+    requestBody = approvalData.dict()
+    log_request("POST /jobs/{jobId}/tasks/approve/continue", requestBody, jobId)
     
     return JobResponse(
         jobId=jobId,
         status="TASK_CONTINUE_APPROVED",
-        received=request_body
+        received=requestBody
     )
 
 
