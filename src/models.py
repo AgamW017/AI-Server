@@ -46,6 +46,7 @@ class JobBody(BaseModel):
 class JobCreateRequest(BaseModel):
     data: JobBody
     userId: str
+    jobId: str
     webhookUrl: str
     webhookSecret: str
     # Add other job fields as needed

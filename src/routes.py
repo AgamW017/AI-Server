@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, BackgroundTasks
 from typing import Dict, Any
+from ai import ProcessVideo
 from models import JobCreateRequest, JobUpdateRequest, JobResponse
 from auth import verify_webhook_secret, log_request
 
@@ -8,13 +9,13 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.post("/")
 async def create_job(
     jobData: JobCreateRequest,
+    background_tasks: BackgroundTasks,
     _: str = Depends(verify_webhook_secret)
 ):
-    """Accept job data and return a job ID"""
     log_request("POST /jobs", jobData.dict())
     
     if jobData.data.type == 'VIDEO':
-        print("Processing video job with URL:", jobData.data.url)
+        background_tasks.add_task(ProcessVideo, jobData)
     
     return Response(content="CREATED", media_type="text/plain")
 
