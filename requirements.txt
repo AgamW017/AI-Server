@@ -1,13 +1,7 @@
-fastapi
-uvicorn
-python-dotenv
-requests
-pydantic
-
-# Essential audio processing libraries
-yt-dlp>=2023.7.6
-pydub>=0.25.0
-
-# AI/ML libraries for transcription
-openai-whisper>=20231117
-torch>=2.0.0
+fastapi>=0.115.14
+uvicorn>=0.35.0
+python-dotenv>=1.0.1
+requests>=2.32.3
+pydantic>=2.11.7
+yt-dlp>=2025.6.30
+openai-whisper>=20250625
