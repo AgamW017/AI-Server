@@ -5,6 +5,12 @@ import logging
 
 from routes import router
 
+# Import webhook routes
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from webhook_routes import router as webhook_router
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +36,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(router)
+app.include_router(webhook_router)
 
 
 @app.get("/")

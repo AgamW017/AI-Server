@@ -17,10 +17,12 @@ class TranscriptParameters(BaseModel):
 class SegmentationParameters(BaseModel):
     lambda_param: Optional[float] = Field(None, alias="lambda")
     epochs: Optional[int] = None
+    model: Optional[str] = None
 
 class QuestionGenerationParameters(BaseModel):
-    prompt: str
+    prompt: Optional[str] = None
     model: Optional[str] = None
+    questionSpecification: Optional[list[Dict[str, int]]] = None
 
 class UploadParameters(BaseModel):
     courseId: str = Field(...)
@@ -71,3 +73,68 @@ class JobResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     message: str
+
+class TranscriptSegment(BaseModel):
+    end_time: str
+    transcript_lines: list[str]
+
+class CleanedSegment(BaseModel):
+    end_time: str
+    transcript_lines: list[str]
+
+class QuestionOption(BaseModel):
+    text: str
+    correct: Optional[bool] = None
+    explanation: Optional[str] = None
+
+class GeneratedQuestion(BaseModel):
+    segmentId: Optional[str] = None
+    questionType: Optional[str] = None
+    questionText: str
+    options: Optional[list[QuestionOption]] = None
+    solution: Optional[Any] = None
+    isParameterized: Optional[bool] = False
+    timeLimitSeconds: Optional[int] = None
+    points: Optional[int] = None
+
+class SegmentationRequest(BaseModel):
+    transcript: str
+    model: Optional[str] = "gemma3"
+
+class QuestionGenerationRequest(BaseModel):
+    segments: Dict[str, str]
+    globalQuestionSpecification: list[Dict[str, int]]
+    model: Optional[str] = "gemma3"
+
+class TaskStatus(str, Enum):
+    STARTED = "STARTED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class AudioData(BaseModel):
+    status: TaskStatus
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+
+class TranscriptGenerationData(BaseModel):
+    status: TaskStatus
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    newParameters: Optional[TranscriptParameters] = None
+
+class SegmentationData(BaseModel):
+    status: TaskStatus
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    newParameters: Optional[SegmentationParameters] = None
+
+class QuestionGenerationData(BaseModel):
+    status: TaskStatus
+    questionType: Optional[str] = None
+    question: Optional[GeneratedQuestion] = None
+    newParameters: Optional[QuestionGenerationParameters] = None
+
+class ContentUploadData(BaseModel):
+    status: TaskStatus
+    courseId: Optional[str] = None
+    versionId: Optional[str] = None
