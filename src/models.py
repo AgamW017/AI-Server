@@ -113,28 +113,60 @@ class TaskStatus(str, Enum):
 
 class AudioData(BaseModel):
     status: TaskStatus
+    error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
 
 class TranscriptGenerationData(BaseModel):
     status: TaskStatus
+    error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
     newParameters: Optional[TranscriptParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
 
 class SegmentationData(BaseModel):
     status: TaskStatus
+    error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
     newParameters: Optional[SegmentationParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
 
 class QuestionGenerationData(BaseModel):
     status: TaskStatus
+    error: Optional[str] = None
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
     questionType: Optional[str] = None
     question: Optional[GeneratedQuestion] = None
     newParameters: Optional[QuestionGenerationParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
 
 class ContentUploadData(BaseModel):
     status: TaskStatus
+    error: Optional[str] = None
     courseId: Optional[str] = None
     versionId: Optional[str] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}

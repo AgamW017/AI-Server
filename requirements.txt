@@ -5,3 +5,4 @@ requests>=2.32.3
 pydantic>=2.11.7
 yt-dlp>=2025.6.30
 openai-whisper>=20250625
+google-cloud-storage>=3.2.0

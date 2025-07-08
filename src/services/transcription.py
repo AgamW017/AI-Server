@@ -87,11 +87,8 @@ class TranscriptionService:
             language = 'en'  # Default to English
             model_size = 'small'  # Default to small model
         
-        # Validate language support (convert back to friendly name for validation)
-        language_name_map = {'en': 'English', 'hi': 'Hindi'}
-        language_name = language_name_map.get(language, 'English')
-        
-        if not self._is_language_supported(language_name):
+        # Validate language support
+        if not self._is_language_supported(language):
             raise Exception(
                 f"Unsupported language: {language}. Supported languages: {', '.join(SUPPORTED_LANGUAGES)}"
             )
