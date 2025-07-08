@@ -392,37 +392,21 @@ Each question should:
         """
         Generate questions based on segments and question specifications
         """
-        # Extract parameters from question_params or use defaults
-        model = "gemma3"
-        global_question_specification = [{"SOL": 2, "SML": 1, "NAT": 1, "DES": 1}]
-        
-        if question_params:
-            if hasattr(question_params, 'model') and question_params.model:
-                model = question_params.model
-            if hasattr(question_params, 'questionSpecification') and question_params.questionSpecification:
-                global_question_specification = question_params.questionSpecification
-
+        model = question_params.model if question_params and question_params.model else "gemma3"
+        question_specs = {
+            "SOL": question_params.SOL if question_params and question_params.SOL else 2,
+            "SML": question_params.SML if question_params and question_params.SML else 1,
+            "NAT": question_params.NAT if question_params and question_params.NAT else 1,
+            "DES": question_params.DES if question_params and question_params.DES else 1,
+        }
         if not segments or not isinstance(segments, dict) or not segments:
             raise HTTPException(
                 status_code=400,
                 detail="segments is required and must be a non-empty object with segmentId as keys and transcript as values."
             )
 
-        if (not global_question_specification or 
-            not isinstance(global_question_specification, list) or 
-            not global_question_specification or
-            not global_question_specification[0] or
-            not isinstance(global_question_specification[0], dict) or
-            not global_question_specification[0]):
-            raise HTTPException(
-                status_code=400,
-                detail="globalQuestionSpecification is required and must be a non-empty array with a non-empty object defining question types and counts."
-            )
-
         all_generated_questions = []
         logger.info(f"Using model: {model} for question generation.")
-
-        question_specs = global_question_specification[0]  # Assuming the first spec in the array is the global one
 
         # Process each segment
         for segment_id, segment_transcript in segments.items():
@@ -430,7 +414,7 @@ Each question should:
                 logger.warning(f"No transcript found for segment {segment_id}. Skipping.")
                 continue
 
-            logger.info(f"Processing segment {segment_id} with global specs: {question_specs}")
+            logger.info(f"Processing segment {segment_id} with question specs: {question_specs}")
 
             # Generate questions for each type based on globalQuestionSpecification
             for question_type, count in question_specs.items():

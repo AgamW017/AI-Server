@@ -20,9 +20,11 @@ class SegmentationParameters(BaseModel):
     model: Optional[str] = None
 
 class QuestionGenerationParameters(BaseModel):
-    prompt: Optional[str] = None
     model: Optional[str] = None
-    questionSpecification: Optional[list[Dict[str, int]]] = None
+    SOL: Optional[int] = None
+    SML: Optional[int] = None
+    NAT: Optional[int] = None
+    DES: Optional[int] = None
 
 class UploadParameters(BaseModel):
     courseId: str = Field(...)
