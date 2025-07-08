@@ -45,7 +45,6 @@ class JobBody(BaseModel):
     transcriptParameters: Optional[TranscriptParameters] = None
     segmentationParameters: Optional[SegmentationParameters] = None
     questionGenerationParameters: Optional[QuestionGenerationParameters] = None
-    uploadParameters: Optional[UploadParameters] = None
 
 class JobCreateRequest(BaseModel):
     data: JobBody
@@ -56,9 +55,7 @@ class JobCreateRequest(BaseModel):
     # Add other job fields as needed
 
 class JobUpdateRequest(BaseModel):
-    # Task parameters for job updates
-    parameters: Optional[Dict[str, Any]] = None
-    data: Optional[Dict[str, Any]] = None
+    parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
 
 class WebhookRequest(BaseModel):
     task: str
@@ -66,11 +63,39 @@ class WebhookRequest(BaseModel):
     jobId: str
     data: Dict[str, Any]
 
-class JobResponse(BaseModel):
-    status: str
-    jobId: Optional[str] = None
-    received: Optional[Dict[str, Any]] = None
+class TaskStatus(str, Enum):
+    PENDING = 'PENDING'
+    RUNNING = 'RUNNING'
+    WAITING = 'WAITING'
+    COMPLETED = 'COMPLETED'
+    FAILED = 'FAILED'
+    ABORTED = 'ABORTED'
 
+# Endpoint-specific response models
+class JobCreateResponse(BaseModel):
+    message: str = "Job created successfully"
+
+class JobUpdateResponse(BaseModel):
+    message: str
+
+class TaskApprovalResponse(BaseModel):
+    message: str
+
+class JobAbortResponse(BaseModel):
+    message: str
+
+class TaskRerunResponse(BaseModel):
+    message: str
+    jobId: str
+
+class JobStatusResponse(BaseModel):
+    jobId: str
+    status: TaskStatus
+    currentTask: Optional[str] = None
+
+class JobErrorResponse(BaseModel):
+    error: str
+    details: Optional[str] = None
 
 class ErrorResponse(BaseModel):
     error: str
@@ -107,11 +132,6 @@ class QuestionGenerationRequest(BaseModel):
     segments: Dict[str, str]
     globalQuestionSpecification: list[Dict[str, int]]
     model: Optional[str] = "gemma3"
-
-class TaskStatus(str, Enum):
-    STARTED = "STARTED"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
 
 class AudioData(BaseModel):
     status: TaskStatus

@@ -1,24 +1,60 @@
-from fastapi import APIRouter, Depends, Response, BackgroundTasks
+from fastapi import APIRouter, Depends, Response, BackgroundTasks, HTTPException
+from typing import Optional
 from ai import (
-    ProcessVideo, 
     start_audio_extraction_task,
     start_transcript_generation_task,
     start_segmentation_task,
-    start_question_generation_task,
-    complete_job,
-    job_states
+    start_question_generation_task
 )
-from models import JobCreateRequest, JobUpdateRequest, JobResponse
+from models import (
+    JobCreateRequest, 
+    JobUpdateRequest, 
+    JobCreateResponse,
+    JobUpdateResponse,
+    TaskApprovalResponse,
+    JobAbortResponse,
+    TaskRerunResponse,
+    JobStatusResponse,
+    JobErrorResponse,
+    TaskStatus
+)
 from auth import verify_webhook_secret, log_request
+from services.database import db_service
 import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+def run_async_task_in_thread(async_func, *args, **kwargs):
+    """Helper function to run async tasks in a new thread with its own event loop"""
+    def run_in_thread():
+        try:
+            print(f"Starting background task: {async_func.__name__}")
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(async_func(*args, **kwargs))
+                print(f"Background task completed successfully: {async_func.__name__}")
+                return result
+            finally:
+                loop.close()
+        except Exception as e:
+            print(f"Error in background task {async_func.__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    # Run in a separate thread
+    thread = threading.Thread(target=run_in_thread)
+    thread.start()
+
 def run_async_task(async_func, *args, **kwargs):
     """Helper function to run async tasks in background"""
-    asyncio.create_task(async_func(*args, **kwargs))
+    return run_async_task_in_thread(async_func, *args, **kwargs)
 
-@router.post("/")
+@router.post("/", response_model=JobCreateResponse)
 async def create_job(
     jobData: JobCreateRequest,
     background_tasks: BackgroundTasks,
@@ -26,13 +62,23 @@ async def create_job(
 ):
     log_request("POST /jobs", jobData.dict())
     
-    if jobData.data.type == 'VIDEO':
-        background_tasks.add_task(ProcessVideo, jobData)
+    print(f"Create job called with data: {jobData.dict()}")
     
-    return Response(content="CREATED", media_type="text/plain")
+    if jobData.data.type == 'VIDEO':
+        print(f"Processing VIDEO job {jobData.jobId}")
+        
+        # Don't start processing immediately - just prepare the job and ask for approval
+        # The job should be created in the database by external system with status PENDING
+        # and current_task as "PENDING" waiting for first task approval
+        
+        print(f"Job {jobData.jobId} prepared, waiting for task approval")
+    else:
+        print(f"Unsupported job type: {jobData.data.type}")
+    
+    return JobCreateResponse(message="Job created successfully, waiting for task approval")
 
 
-@router.post("/{jobId}/update", response_model=JobResponse)
+@router.post("/{jobId}/update", response_model=JobUpdateResponse)
 async def update_job(
     jobId: str,
     updateData: JobUpdateRequest,
@@ -42,51 +88,66 @@ async def update_job(
     requestBody = updateData.dict()
     log_request("POST /jobs/{jobId}/update", requestBody, jobId)
     
-    return JobResponse(
-        jobId=jobId,
-        status="UPDATED",
-        received=requestBody
-    )
+    return JobUpdateResponse(message="Job parameters updated successfully")
 
 
-@router.post("/{jobId}/tasks/approve/start", response_model=JobResponse)
+@router.post("/{jobId}/tasks/approve/start", response_model=TaskApprovalResponse)
 async def approve_task_start(
     jobId: str,
-    taskData: JobUpdateRequest,
     background_tasks: BackgroundTasks,
-    _: str = Depends(verify_webhook_secret)
+    _: str = Depends(verify_webhook_secret),
+    taskData: Optional[JobUpdateRequest] = None
 ):
-    """Approve task to start"""
-    requestBody = taskData.dict()
+    """Approve any task to start - works for all tasks"""
+    requestBody = taskData.dict() if taskData else {}
     log_request("POST /jobs/{jobId}/tasks/approve/start", requestBody, jobId)
     
-    if jobId not in job_states:
-        return JobResponse(
-            jobId=jobId,
-            status="ERROR_JOB_NOT_FOUND"
-        )
+    print(f"Approve task start called for job {jobId}")
     
-    job_state = job_states[jobId]
+    # Get job state from database
+    job_state = await db_service.get_job_state(jobId)
+    if not job_state:
+        print(f"Job {jobId} not found in database")
+        raise HTTPException(status_code=404, detail="Job not found")
+    
     current_task = job_state.get("current_task", "PENDING")
+    task_status = job_state.get("task_status", "PENDING")
     
-    # Determine which task to start based on current state
+    print(f"Job {jobId} current_task: {current_task}, task_status: {task_status}")
+    
+    # Only start if task is waiting for approval (PENDING or WAITING)
+    if task_status not in ["PENDING", "WAITING"]:
+        raise HTTPException(status_code=400, detail=f"Current task {current_task} is not waiting for approval (status: {task_status})")
+    
+    # Start the appropriate task based on current_task
     if current_task == "PENDING":
-        # Start audio extraction - no parameters needed for this task
+        # Start audio extraction task
+        print(f"Starting audio extraction task for job {jobId}")
         background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, requestBody)
-        job_state["current_task"] = "AUDIO_EXTRACTION"
-        return JobResponse(
-            jobId=jobId,
-            status="AUDIO_EXTRACTION_STARTED",
-            received=requestBody
-        )
+        return TaskApprovalResponse(message="Audio extraction task started")
+    elif current_task == "AUDIO_EXTRACTION":
+        # Start transcript generation task
+        print(f"Starting transcript generation task for job {jobId}")
+        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, requestBody)
+        return TaskApprovalResponse(message="Transcript generation task started")
+    elif current_task == "TRANSCRIPT_GENERATION":
+        # Start segmentation task
+        print(f"Starting segmentation task for job {jobId}")
+        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, requestBody)
+        return TaskApprovalResponse(message="Segmentation task started")
+    elif current_task == "SEGMENTATION":
+        # Start question generation task
+        print(f"Starting question generation task for job {jobId}")
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, requestBody)
+        return TaskApprovalResponse(message="Question generation task started")
+    elif current_task == "QUESTION_GENERATION":
+        # Question generation is the final task - no more tasks after this
+        raise HTTPException(status_code=400, detail="Question generation is the final task. No more tasks available.")
     else:
-        return JobResponse(
-            jobId=jobId,
-            status=f"ERROR_INVALID_STATE_{current_task}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
 
 
-@router.post("/{jobId}/tasks/approve/continue", response_model=JobResponse)
+@router.post("/{jobId}/tasks/approve/continue", response_model=TaskApprovalResponse)
 async def approve_task_continue(
     jobId: str,
     approvalData: JobUpdateRequest,
@@ -97,63 +158,35 @@ async def approve_task_continue(
     requestBody = approvalData.dict()
     log_request("POST /jobs/{jobId}/tasks/approve/continue", requestBody, jobId)
     
-    if jobId not in job_states:
-        return JobResponse(
-            jobId=jobId,
-            status="ERROR_JOB_NOT_FOUND"
-        )
+    # Get job state from database
+    job_state = await db_service.get_job_state(jobId)
+    if not job_state:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    job_state = job_states[jobId]
     current_task = job_state.get("current_task")
     task_status = job_state.get("task_status")
     
     if task_status != "COMPLETED":
-        return JobResponse(
-            jobId=jobId,
-            status=f"ERROR_TASK_NOT_COMPLETED_{current_task}"
-        )
+        raise HTTPException(status_code=400, detail=f"Current task {current_task} is not completed (status: {task_status})")
     
     # Determine next task and start it
     if current_task == "AUDIO_EXTRACTION":
         background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, requestBody)
-        job_state["current_task"] = "TRANSCRIPT_GENERATION"
-        return JobResponse(
-            jobId=jobId,
-            status="TRANSCRIPT_GENERATION_STARTED",
-            received=requestBody
-        )
+        return TaskApprovalResponse(message="Transcript generation task started")
     elif current_task == "TRANSCRIPT_GENERATION":
         background_tasks.add_task(run_async_task, start_segmentation_task, jobId, requestBody)
-        job_state["current_task"] = "SEGMENTATION"
-        return JobResponse(
-            jobId=jobId,
-            status="SEGMENTATION_STARTED",
-            received=requestBody
-        )
+        return TaskApprovalResponse(message="Segmentation task started")
     elif current_task == "SEGMENTATION":
         background_tasks.add_task(run_async_task, start_question_generation_task, jobId, requestBody)
-        job_state["current_task"] = "QUESTION_GENERATION"
-        return JobResponse(
-            jobId=jobId,
-            status="QUESTION_GENERATION_STARTED",
-            received=requestBody
-        )
+        return TaskApprovalResponse(message="Question generation task started")
     elif current_task == "QUESTION_GENERATION":
-        background_tasks.add_task(run_async_task, complete_job, jobId, requestBody)
-        job_state["current_task"] = "UPLOAD_CONTENT"
-        return JobResponse(
-            jobId=jobId,
-            status="UPLOAD_CONTENT_STARTED",
-            received=requestBody
-        )
+        # Question generation is the final task - job is complete
+        raise HTTPException(status_code=400, detail="Question generation is the final task. Job is complete.")
     else:
-        return JobResponse(
-            jobId=jobId,
-            status=f"ERROR_NO_NEXT_TASK_{current_task}"
-        )
+        raise HTTPException(status_code=400, detail=f"No next task available for current task: {current_task}")
 
 
-@router.post("/{jobId}/abort", response_model=JobResponse)
+@router.post("/{jobId}/abort", response_model=JobAbortResponse)
 async def abort_job(
     jobId: str,
     _: str = Depends(verify_webhook_secret)
@@ -161,23 +194,17 @@ async def abort_job(
     """Abort the job"""
     log_request("POST /jobs/{jobId}/abort", {}, jobId)
     
-    if jobId not in job_states:
-        return JobResponse(
-            jobId=jobId,
-            status="ERROR_JOB_NOT_FOUND"
-        )
+    # Get job state from database
+    job_state = await db_service.get_job_state(jobId)
+    if not job_state:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    # Update job state to aborted
-    job_state = job_states[jobId]
-    job_state["task_status"] = "ABORTED"
+    # Note: Job status updates are handled by the external system, not this read-only service
     
-    return JobResponse(
-        jobId=jobId,
-        status="ABORTED"
-    )
+    return JobAbortResponse(message="Job aborted successfully")
 
 
-@router.post("/{jobId}/tasks/rerun", response_model=JobResponse)
+@router.post("/{jobId}/tasks/rerun", response_model=TaskRerunResponse)
 async def rerun_task(
     jobId: str,
     background_tasks: BackgroundTasks,
@@ -186,77 +213,56 @@ async def rerun_task(
     """Rerun the current task"""
     log_request("POST /jobs/{jobId}/tasks/rerun", {}, jobId)
     
-    if jobId not in job_states:
-        return JobResponse(
-            jobId=jobId,
-            status="ERROR_JOB_NOT_FOUND"
-        )
+    # Get job state from database
+    job_state = await db_service.get_job_state(jobId)
+    if not job_state:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    job_state = job_states[jobId]
     current_task = job_state.get("current_task")
     
     # Reset task status and rerun current task
-    job_state["task_status"] = "PENDING"
+    if current_task:
+        # Note: Job status updates are handled by the external system, not this read-only service
+        pass
     
     if current_task == "AUDIO_EXTRACTION":
         background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, None)
-        return JobResponse(
-            jobId=jobId,
-            status="AUDIO_EXTRACTION_RESTARTED"
-        )
+        return TaskRerunResponse(message="Audio extraction task restarted", jobId=jobId)
     elif current_task == "TRANSCRIPT_GENERATION":
         background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, None)
-        return JobResponse(
-            jobId=jobId,
-            status="TRANSCRIPT_GENERATION_RESTARTED"
-        )
+        return TaskRerunResponse(message="Transcript generation task restarted", jobId=jobId)
     elif current_task == "SEGMENTATION":
         background_tasks.add_task(run_async_task, start_segmentation_task, jobId, None)
-        return JobResponse(
-            jobId=jobId,
-            status="SEGMENTATION_RESTARTED"
-        )
+        return TaskRerunResponse(message="Segmentation task restarted", jobId=jobId)
     elif current_task == "QUESTION_GENERATION":
         background_tasks.add_task(run_async_task, start_question_generation_task, jobId, None)
-        return JobResponse(
-            jobId=jobId,
-            status="QUESTION_GENERATION_RESTARTED"
-        )
-    elif current_task == "UPLOAD_CONTENT":
-        background_tasks.add_task(run_async_task, complete_job, jobId, None)
-        return JobResponse(
-            jobId=jobId,
-            status="UPLOAD_CONTENT_RESTARTED"
-        )
+        return TaskRerunResponse(message="Question generation task restarted", jobId=jobId)
     else:
-        return JobResponse(
-            jobId=jobId,
-            status=f"ERROR_UNKNOWN_TASK_{current_task}"
-        )
+        raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
 
 
-@router.get("/{jobId}/status", response_model=JobResponse)
+@router.get("/{jobId}/status", response_model=JobStatusResponse)
 async def get_job_status(
     jobId: str,
     _: str = Depends(verify_webhook_secret)
 ):
     """Get current job status and task information"""
-    if jobId not in job_states:
-        return JobResponse(
-            jobId=jobId,
-            status="ERROR_JOB_NOT_FOUND"
-        )
+    # Get job state from database
+    job_state = await db_service.get_job_state(jobId)
+    if not job_state:
+        raise HTTPException(status_code=404, detail="Job not found")
     
-    job_state = job_states[jobId]
-    return JobResponse(
+    current_task = job_state.get("current_task", "UNKNOWN")
+    task_status = job_state.get("task_status", "UNKNOWN")
+    
+    # Convert task_status to TaskStatus enum if it's a valid value
+    try:
+        status_enum = TaskStatus(task_status)
+    except ValueError:
+        status_enum = TaskStatus.PENDING
+    
+    return JobStatusResponse(
         jobId=jobId,
-        status=f"{job_state.get('current_task', 'UNKNOWN')}_{job_state.get('task_status', 'UNKNOWN')}",
-        received={
-            "current_task": job_state.get("current_task"),
-            "task_status": job_state.get("task_status"),
-            "has_audio": bool(job_state.get("audio_file_path")),
-            "has_transcript": bool(job_state.get("transcript")),
-            "has_segments": bool(job_state.get("segments")),
-            "questions_count": len(job_state.get("questions", []))
-        }
+        status=status_enum,
+        currentTask=current_task
     )

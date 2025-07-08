@@ -2,12 +2,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
+import os
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from routes import router
+from services.database import db_service
 
 # Import webhook routes
 import sys
-import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from webhook_routes import router as webhook_router
 
@@ -18,11 +24,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Connecting to MongoDB...")
+    await db_service.connect()
+    logger.info("MongoDB connection established")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Disconnecting from MongoDB...")
+    await db_service.disconnect()
+    logger.info("MongoDB connection closed")
+
 # Create FastAPI app
 app = FastAPI(
     title="AI Server",
-    description="FastAPI-based AI processing server with webhook integration",
-    version="1.0.0"
+    description="FastAPI-based AI processing server with webhook integration and MongoDB persistence",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
