@@ -18,7 +18,7 @@ from models import (
     JobErrorResponse,
     TaskStatus
 )
-from auth import verify_webhook_secret, log_request
+from auth import verify_webhook_secret
 from services.database import db_service
 import asyncio
 import threading
@@ -60,8 +60,6 @@ async def create_job(
     background_tasks: BackgroundTasks,
     _: str = Depends(verify_webhook_secret)
 ):
-    log_request("POST /jobs", jobData.dict())
-    
     print(f"Create job called with data: {jobData.dict()}")
     
     if jobData.data.type == 'VIDEO':
@@ -86,7 +84,6 @@ async def update_job(
 ):
     """Update job parameters"""
     requestBody = updateData.dict()
-    log_request("POST /jobs/{jobId}/update", requestBody, jobId)
     
     return JobUpdateResponse(message="Job parameters updated successfully")
 
@@ -100,7 +97,6 @@ async def approve_task_start(
 ):
     """Approve any task to start - works for all tasks"""
     requestBody = taskData.dict() if taskData else {}
-    log_request("POST /jobs/{jobId}/tasks/approve/start", requestBody, jobId)
     
     print(f"Approve task start called for job {jobId}")
     
@@ -156,7 +152,6 @@ async def approve_task_continue(
 ):
     """Approve task completion and continue to next task"""
     requestBody = approvalData.dict()
-    log_request("POST /jobs/{jobId}/tasks/approve/continue", requestBody, jobId)
     
     # Get job state from database
     job_state = await db_service.get_job_state(jobId)
@@ -192,7 +187,6 @@ async def abort_job(
     _: str = Depends(verify_webhook_secret)
 ):
     """Abort the job"""
-    log_request("POST /jobs/{jobId}/abort", {}, jobId)
     
     # Get job state from database
     job_state = await db_service.get_job_state(jobId)
@@ -211,7 +205,6 @@ async def rerun_task(
     _: str = Depends(verify_webhook_secret)
 ):
     """Rerun the current task"""
-    log_request("POST /jobs/{jobId}/tasks/rerun", {}, jobId)
     
     # Get job state from database
     job_state = await db_service.get_job_state(jobId)

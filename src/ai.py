@@ -15,9 +15,10 @@ from models import (
     SegmentationParameters,
     QuestionGenerationParameters
 )
-from services.ai_content import AIContentService
 from services.audio import AudioService
 from services.transcription import TranscriptionService
+from services.segmentation import SegmentationService
+from services.question_generation import QuestionGenerationService
 from services.storage import GCloudStorageService
 from services.database import db_service
 
@@ -55,6 +56,7 @@ async def start_audio_extraction_task(job_id: str, approval_data: Optional[Dict[
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
+        # Extract audio from video
         print(f"Extracting audio from video: {job_data.get('url')}")
         audio_file_path = await audio_service.extractAudio(str(job_data.get('url')))
         print(f"Audio extracted successfully to: {audio_file_path}")
@@ -203,7 +205,6 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Dict[str,
     if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
         webhook_url = "http://" + webhook_url
 
-    ai_service = AIContentService()
     storage_service = GCloudStorageService()
     
     try:
@@ -232,7 +233,8 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Dict[str,
         
         # Segment the transcript
         print("Segmenting transcript...")
-        segments = await ai_service.segment_transcript(transcript, segmentation_params)
+        segmentation_service = SegmentationService()
+        segments = await segmentation_service.segment_transcript(transcript, segmentation_params)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
@@ -295,8 +297,7 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Di
     webhook_url = job_data.get("webhookUrl")
     if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
         webhook_url = "http://" + webhook_url
-
-    ai_service = AIContentService()
+        
     storage_service = GCloudStorageService()
     
     try:
@@ -325,7 +326,8 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Di
         
         # Generate questions from segments
         print("Generating questions...")
-        questions = await ai_service.generate_questions(
+        question_service = QuestionGenerationService()
+        questions = await question_service.generate_questions(
             segments=segments,
             question_params=question_params
         )
