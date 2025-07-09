@@ -1,7 +1,6 @@
 import os
 import json
 from typing import Optional, Any
-import logging
 
 try:
     from google.cloud import storage
@@ -9,8 +8,6 @@ try:
 except ImportError:
     GCLOUD_AVAILABLE = False
     storage = None
-
-logger = logging.getLogger(__name__)
 
 class GCloudStorageService:
     """Google Cloud Storage service for uploading files"""
@@ -23,7 +20,6 @@ class GCloudStorageService:
         self.bucket = None
         
         if not GCLOUD_AVAILABLE:
-            logger.warning("Google Cloud Storage library not available. Install google-cloud-storage package.")
             return
         
         # Initialize Google Cloud Storage client
@@ -32,19 +28,16 @@ class GCloudStorageService:
             if storage:
                 self.client = storage.Client(project=self.project_id)
         except Exception as e:
-            logger.warning(f"Could not initialize GCS client with default credentials: {e}")
             # For development, you might want to use service account key
             credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
             if credentials_path and os.path.exists(credentials_path) and storage:
                 self.client = storage.Client.from_service_account_json(credentials_path, project=self.project_id)
-            else:
-                logger.error("No valid GCS credentials found. Set GOOGLE_APPLICATION_CREDENTIALS environment variable.")
         
         if self.client:
             try:
                 self.bucket = self.client.bucket(self.bucket_name)
             except Exception as e:
-                logger.error(f"Could not access bucket {self.bucket_name}: {e}")
+                print(f"Error accessing GCS bucket {self.bucket_name}: {e}")
 
     async def upload_file(self, file_path: str, destination_name: str, content_type: str = 'application/octet-stream') -> Optional[str]:
         """
@@ -59,11 +52,9 @@ class GCloudStorageService:
             Public URL of the uploaded file or None if upload failed
         """
         if not self.bucket:
-            logger.error("GCS bucket not available")
             return None
             
         if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
             return None
             
         try:
@@ -78,11 +69,9 @@ class GCloudStorageService:
             
             # Return the public URL
             public_url = blob.public_url
-            logger.info(f"File uploaded successfully: {public_url}")
             return public_url
             
         except Exception as e:
-            logger.error(f"Error uploading file to GCS: {e}")
             return None
 
     async def upload_text_content(self, content: str, destination_name: str, content_type: str = 'text/plain') -> Optional[str]:
@@ -98,7 +87,6 @@ class GCloudStorageService:
             Public URL of the uploaded content or None if upload failed
         """
         if not self.bucket:
-            logger.error("GCS bucket not available")
             return None
             
         try:
@@ -112,11 +100,9 @@ class GCloudStorageService:
             
             # Return the public URL
             public_url = blob.public_url
-            logger.info(f"Content uploaded successfully: {public_url}")
             return public_url
             
         except Exception as e:
-            logger.error(f"Error uploading content to GCS: {e}")
             return None
 
     async def upload_json_content(self, data: Any, destination_name: str) -> Optional[str]:

@@ -1,22 +1,7 @@
 import os
-import asyncio
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
-from pymongo import ASCENDING, DESCENDING
-import logging
-from enum import Enum
-
-from models import JobCreateRequest, TaskStatus
-
-logger = logging.getLogger(__name__)
-
-class JobStatus(str, Enum):
-    PENDING = "PENDING"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    ABORTED = "ABORTED"
+from models import TaskStatus as JobStatus
 
 class DatabaseService:
     """
@@ -38,9 +23,8 @@ class DatabaseService:
             return
             
         try:
-            db_url = os.getenv('MONGODB_URL')
+            db_url = os.getenv('DB_URL')
             if not db_url:
-                logger.error("MONGODB_URL environment variable not set")
                 raise ValueError("MONGODB_URL environment variable not set")
             
             self.client = AsyncIOMotorClient(db_url)
@@ -52,11 +36,9 @@ class DatabaseService:
             
             # Test connection
             await self.client.admin.command('ping')
-            logger.info("Connected to MongoDB Atlas successfully")
             self._connected = True
             
         except Exception as e:
-            logger.error(f"Failed to connect to MongoDB: {e}")
             raise
     
     async def ensure_connected(self):
@@ -72,7 +54,6 @@ class DatabaseService:
         if self.client:
             self.client.close()
             self._connected = False
-            logger.info("Disconnected from MongoDB")
     
     # READ-ONLY OPERATIONS
     
@@ -85,7 +66,6 @@ class DatabaseService:
             job = await self.genai_collection.find_one({"_id": job_id})
             return job
         except Exception as e:
-            logger.error(f"Error getting GenAI job {job_id}: {e}")
             return None
     
     async def get_task_data(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -97,7 +77,6 @@ class DatabaseService:
             task_data = await self.task_data_collection.find_one({"jobId": job_id})
             return task_data
         except Exception as e:
-            logger.error(f"Error getting task data for job {job_id}: {e}")
             return None
     
     async def get_job_state(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -110,13 +89,11 @@ class DatabaseService:
             # Get job info
             job = await self.get_genai_job(job_id)
             if not job:
-                logger.warning(f"No job found with ID: {job_id}")
                 return None
             
             # Get task data
             task_data = await self.get_task_data(job_id)
             if not task_data:
-                logger.warning(f"No task data found for job: {job_id}")
                 # Return basic state without task data
                 return {
                     "job_data": job,
@@ -165,7 +142,6 @@ class DatabaseService:
             return state
             
         except Exception as e:
-            logger.error(f"Error getting job state for {job_id}: {e}")
             return None
 
 # Global database service instance

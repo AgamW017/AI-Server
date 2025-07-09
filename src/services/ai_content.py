@@ -1,7 +1,5 @@
 import json
 import re
-import time
-import logging
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 import requests
 from fastapi import HTTPException
@@ -17,8 +15,6 @@ from models import (
     SegmentationRequest,
     QuestionGenerationRequest
 )
-
-logger = logging.getLogger(__name__)
 
 class AIContentService:
     """AI Content Service for transcript segmentation and question generation"""
@@ -159,8 +155,6 @@ class AIContentService:
                 detail="Transcript text is required and must be a non-empty string."
             )
 
-        logger.info(f"Processing transcript for segmentation with LLM (length: {len(transcript)} chars) using model: {model}")
-
         prompt = f"""Analyze the following timed lecture transcript. Your task is to segment it into meaningful subtopics (not too many, maximum 5 segments).
 The transcript is formatted with each line as: [start_time --> end_time] text OR start_time --> end_time text.
 
@@ -207,14 +201,11 @@ JSON:"""
 
             if response.json() and isinstance(response.json().get('response'), str):
                 generated_text = response.json()['response']
-                logger.info(f"Ollama segmentation response received, length: {len(generated_text)}")
-                logger.info(f"Response preview: {generated_text[:500]}")
 
                 # Enhanced JSON extraction with multiple fallback strategies
                 try:
                     cleaned_json_text = self.extract_json_from_markdown(generated_text)
                 except Exception as extract_error:
-                    logger.warning("Failed to extract JSON from markdown, using raw response")
                     cleaned_json_text = generated_text.strip()
 
                 # Multiple robust JSON parsing strategies
@@ -261,7 +252,6 @@ JSON:"""
                 fixed_json = fixed_json.replace('\n', ' ').replace('\t', ' ')  # Replace newlines/tabs with spaces
                 fixed_json = re.sub(r'\s+', ' ', fixed_json).strip()  # Normalize spaces
 
-                logger.info(f"Attempting to parse JSON: {fixed_json[:200]}...")
                 segments_data = json.loads(fixed_json)
 
                 # Validate the parsed segments
@@ -281,43 +271,13 @@ JSON:"""
                         transcript_lines=segment_data['transcript_lines']
                     ))
 
-                logger.info(f"Successfully parsed {len(segments)} segments")
-
-        except json.JSONDecodeError as parse_error:
-            logger.error("All JSON parsing strategies failed.")
-            logger.error(f"Parse error: {parse_error}")
-            if 'generated_text' in locals():
-                logger.error(f"Raw response: {generated_text}")
-            
-            # Final fallback: create a simple segmentation based on transcript length
-            logger.info("Creating fallback segmentation...")
-            transcript_lines = [line.strip() for line in transcript.split('\n') if line.strip()]
-            lines_per_segment = max(1, len(transcript_lines) // 3)  # Create 3 segments
-            
-            for i in range(0, len(transcript_lines), lines_per_segment):
-                segment_lines = transcript_lines[i:i + lines_per_segment]
-                last_line = segment_lines[-1]
-                
-                # Extract end time from last line
-                time_match = re.findall(r'(\d{2}:\d{2}:\d{2}\.\d{3})', last_line)
-                end_time = time_match[-1] if time_match else f"{str(i // lines_per_segment + 1).zfill(2)}:00.000"
-                
-                segments.append(TranscriptSegment(
-                    end_time=end_time,
-                    transcript_lines=segment_lines
-                ))
-            
-            logger.info(f"Created {len(segments)} fallback segments")
-
         except requests.RequestException as error:
-            logger.error(f"Error in transcript segmentation: {error}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Ollama API error: {str(error)}"
             )
 
         except Exception as error:
-            logger.error(f"Error segmenting transcript: {error}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Error segmenting transcript: {str(error)}"
@@ -331,9 +291,8 @@ JSON:"""
                 if cleaned_transcript and cleaned_transcript.strip():
                     segments_for_generation[segment.end_time] = cleaned_transcript
             except Exception as clean_error:
-                logger.warning(f"Failed to clean transcript for segment {segment.end_time}: {clean_error}")
+                print(f"Error cleaning transcript lines for segment {segment.end_time}: {clean_error}")
 
-        logger.info(f"Segmentation completed. Found {len(segments_for_generation)} segments.")
         return segments_for_generation
 
     def create_question_prompt(self, question_type: str, count: int, transcript_content: str) -> str:
@@ -406,15 +365,11 @@ Each question should:
             )
 
         all_generated_questions = []
-        logger.info(f"Using model: {model} for question generation.")
 
         # Process each segment
         for segment_id, segment_transcript in segments.items():
             if not segment_transcript:
-                logger.warning(f"No transcript found for segment {segment_id}. Skipping.")
                 continue
-
-            logger.info(f"Processing segment {segment_id} with question specs: {question_specs}")
 
             # Generate questions for each type based on globalQuestionSpecification
             for question_type, count in question_specs.items():
@@ -474,20 +429,19 @@ Each question should:
                                     )
                                     all_generated_questions.append(question)
 
-                                logger.info(f"Generated {len(arr)} {question_type} questions for segment {segment_id}")
+                                print(f"Generated {len(arr)} {question_type} questions for segment {segment_id}")
 
                             except json.JSONDecodeError as parse_error:
-                                logger.error(f"Error parsing JSON for {question_type} questions in segment {segment_id}: {parse_error}")
-                                logger.error(f"Raw response: {generated_text}")
+                                print(f"Error parsing JSON for {question_type} questions in segment {segment_id}: {parse_error}")
+                                print(f"Raw response: {generated_text}")
 
                         else:
-                            logger.warning(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")
+                            print(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")
 
                     except requests.RequestException as error:
-                        logger.error(f"Error generating {question_type} questions for segment {segment_id}: {error}")
+                        print(f"Error calling Ollama API for {question_type} questions in segment {segment_id}: {error}")
 
                     except Exception as error:
-                        logger.error(f"Error generating {question_type} questions for segment {segment_id}: {error}")
+                        print(f"Error generating {question_type} questions for segment {segment_id}: {error}")
 
-        logger.info(f"Question generation completed. Generated {len(all_generated_questions)} total questions.")
         return all_generated_questions
