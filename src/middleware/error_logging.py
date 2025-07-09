@@ -65,8 +65,6 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
     async def log_http_error(self, request: Request, status_code: int):
         """Log HTTP errors (4xx, 5xx)"""
         try:
-            # Get client IP
-            client_ip = self.get_client_ip(request)
             
             # Create error log entry
             error_info = {
@@ -75,7 +73,6 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
                 "status_code": status_code,
                 "method": request.method,
                 "url": str(request.url),
-                "client_ip": client_ip,
                 "user_agent": request.headers.get("user-agent", "Unknown"),
             }
             
@@ -88,8 +85,6 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
     async def log_exception(self, request: Request, exception: Exception):
         """Log unhandled exceptions"""
         try:
-            # Get client IP
-            client_ip = self.get_client_ip(request)
             
             # Create error log entry
             error_info = {
@@ -99,7 +94,6 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
                 "exception_message": str(exception),
                 "method": request.method,
                 "url": str(request.url),
-                "client_ip": client_ip,
                 "user_agent": request.headers.get("user-agent", "Unknown"),
                 "traceback": traceback.format_exc()
             }
@@ -110,17 +104,3 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             # Fallback logging if structured logging fails
             error_logger.error(f"Exception {type(exception).__name__}: {exception} - Logging error: {log_error}")
     
-    def get_client_ip(self, request: Request) -> str:
-        """Get client IP address from request"""
-        # Check for forwarded headers first (common in proxy setups)
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-        
-        # Check for real IP header
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip.strip()
-        
-        # Fallback to client host
-        return request.client.host if request.client else "Unknown"

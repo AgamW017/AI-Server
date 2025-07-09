@@ -1,6 +1,7 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, HttpUrl, validator
 from enum import Enum
+from datetime import datetime
 
 class JobType(str, Enum):
     VIDEO  = "VIDEO"
@@ -11,15 +12,18 @@ class LanguageType(str, Enum):
     HINDI = "hi"
     
 class TranscriptParameters(BaseModel):
+    usePrevious: Optional[int] = None
     language: Optional[LanguageType] = None
     model: Optional[str] = None
 
 class SegmentationParameters(BaseModel):
+    usePrevious: Optional[int] = None
     lambda_param: Optional[float] = Field(None, alias="lambda")
     epochs: Optional[int] = None
     model: Optional[str] = None
 
 class QuestionGenerationParameters(BaseModel):
+    usePrevious: Optional[int] = None
     model: Optional[str] = None
     SOL: Optional[int] = None
     SML: Optional[int] = None
@@ -33,6 +37,103 @@ class UploadParameters(BaseModel):
     sectionId: str = Field(...)
     afterItemId: Optional[str] = None
     beforeItemId: Optional[str] = None
+
+class TaskStatus(str, Enum):
+    PENDING = 'PENDING'
+    RUNNING = 'RUNNING'
+    WAITING = 'WAITING'
+    COMPLETED = 'COMPLETED'
+    FAILED = 'FAILED'
+    ABORTED = 'ABORTED'
+
+class QuestionOption(BaseModel):
+    text: str
+    correct: Optional[bool] = None
+    explanation: Optional[str] = None
+    
+class GeneratedQuestion(BaseModel):
+    segmentId: Optional[str] = None
+    questionType: Optional[str] = None
+    questionText: str
+    options: Optional[list[QuestionOption]] = None
+    solution: Optional[Any] = None
+    isParameterized: Optional[bool] = False
+    timeLimitSeconds: Optional[int] = None
+    points: Optional[int] = None
+
+class AudioData(BaseModel):
+    status: TaskStatus
+    error: Optional[str] = None
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
+
+class TranscriptGenerationData(BaseModel):
+    status: TaskStatus
+    error: Optional[str] = None
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    newParameters: Optional[TranscriptParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
+
+class SegmentationData(BaseModel):
+    status: TaskStatus
+    error: Optional[str] = None
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    newParameters: Optional[SegmentationParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
+    
+class QuestionGenerationData(BaseModel):
+    status: TaskStatus
+    error: Optional[str] = None
+    fileName: Optional[str] = None
+    fileUrl: Optional[str] = None
+    newParameters: Optional[QuestionGenerationParameters] = None
+    
+    def dict(self, **kwargs):
+        # Exclude None values from the dictionary
+        data = super().dict(**kwargs)
+        return {k: v for k, v in data.items() if v is not None}
+
+# New database models matching TypeScript interfaces
+class GenAI(BaseModel):
+    type: JobType
+    url: HttpUrl
+    transcriptParameters: Optional[TranscriptParameters] = None
+    segmentationParameters: Optional[SegmentationParameters] = None
+    questionGenerationParameters: Optional[QuestionGenerationParameters] = None
+    uploadParameters: Optional[UploadParameters] = None
+
+class GenAIBody(GenAI):
+    id: Optional[str] = Field(None, alias="_id")
+    userId: str
+    createdAt: datetime
+    jobStatus: TaskStatus
+    webhookUrl: str
+    webhookSecret: str
+    currentTask: Optional[str] = None
+
+class TaskData(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
+    jobId: str
+    audioExtraction: Optional[List[AudioData]] = None
+    transcriptGeneration: Optional[List[TranscriptGenerationData]] = None
+    segmentation: Optional[List[SegmentationData]] = None
+    questionGeneration: Optional[List[QuestionGenerationData]] = None
+    uploadContent: Optional[List[Dict[str, Any]]] = None  # ContentUploadData type not defined yet
 
 class GenAIResponse(BaseModel):
     _id: Optional[str] = None
@@ -62,14 +163,6 @@ class WebhookRequest(BaseModel):
     status: str
     jobId: str
     data: Dict[str, Any]
-
-class TaskStatus(str, Enum):
-    PENDING = 'PENDING'
-    RUNNING = 'RUNNING'
-    WAITING = 'WAITING'
-    COMPLETED = 'COMPLETED'
-    FAILED = 'FAILED'
-    ABORTED = 'ABORTED'
 
 # Endpoint-specific response models
 class JobCreateResponse(BaseModel):
@@ -109,21 +202,6 @@ class CleanedSegment(BaseModel):
     end_time: str
     transcript_lines: list[str]
 
-class QuestionOption(BaseModel):
-    text: str
-    correct: Optional[bool] = None
-    explanation: Optional[str] = None
-
-class GeneratedQuestion(BaseModel):
-    segmentId: Optional[str] = None
-    questionType: Optional[str] = None
-    questionText: str
-    options: Optional[list[QuestionOption]] = None
-    solution: Optional[Any] = None
-    isParameterized: Optional[bool] = False
-    timeLimitSeconds: Optional[int] = None
-    points: Optional[int] = None
-
 class SegmentationRequest(BaseModel):
     transcript: str
     model: Optional[str] = "gemma3"
@@ -133,62 +211,13 @@ class QuestionGenerationRequest(BaseModel):
     globalQuestionSpecification: list[Dict[str, int]]
     model: Optional[str] = "gemma3"
 
-class AudioData(BaseModel):
-    status: TaskStatus
-    error: Optional[str] = None
-    fileName: Optional[str] = None
-    fileUrl: Optional[str] = None
-    
-    def dict(self, **kwargs):
-        # Exclude None values from the dictionary
-        data = super().dict(**kwargs)
-        return {k: v for k, v in data.items() if v is not None}
-
-class TranscriptGenerationData(BaseModel):
-    status: TaskStatus
-    error: Optional[str] = None
-    fileName: Optional[str] = None
-    fileUrl: Optional[str] = None
-    newParameters: Optional[TranscriptParameters] = None
-    
-    def dict(self, **kwargs):
-        # Exclude None values from the dictionary
-        data = super().dict(**kwargs)
-        return {k: v for k, v in data.items() if v is not None}
-
-class SegmentationData(BaseModel):
-    status: TaskStatus
-    error: Optional[str] = None
-    fileName: Optional[str] = None
-    fileUrl: Optional[str] = None
-    newParameters: Optional[SegmentationParameters] = None
-    
-    def dict(self, **kwargs):
-        # Exclude None values from the dictionary
-        data = super().dict(**kwargs)
-        return {k: v for k, v in data.items() if v is not None}
-
-class QuestionGenerationData(BaseModel):
-    status: TaskStatus
-    error: Optional[str] = None
-    fileName: Optional[str] = None
-    fileUrl: Optional[str] = None
-    questionType: Optional[str] = None
-    question: Optional[GeneratedQuestion] = None
-    newParameters: Optional[QuestionGenerationParameters] = None
-    
-    def dict(self, **kwargs):
-        # Exclude None values from the dictionary
-        data = super().dict(**kwargs)
-        return {k: v for k, v in data.items() if v is not None}
-
-class ContentUploadData(BaseModel):
-    status: TaskStatus
-    error: Optional[str] = None
-    courseId: Optional[str] = None
-    versionId: Optional[str] = None
-    
-    def dict(self, **kwargs):
-        # Exclude None values from the dictionary
-        data = super().dict(**kwargs)
-        return {k: v for k, v in data.items() if v is not None}
+# Job state model for combining data
+class JobState(BaseModel):
+    job_data: GenAIBody
+    task_data: Optional[TaskData] = None
+    current_task: str
+    task_status: TaskStatus
+    audio_file_path: Optional[str] = None
+    transcript: Optional[str] = None
+    segments: Optional[List[Dict[str, Any]]] = None
+    questions: Optional[List[GeneratedQuestion]] = None

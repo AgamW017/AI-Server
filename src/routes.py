@@ -76,18 +76,6 @@ async def create_job(
     return JobCreateResponse(message="Job created successfully, waiting for task approval")
 
 
-@router.post("/{jobId}/update", response_model=JobUpdateResponse)
-async def update_job(
-    jobId: str,
-    updateData: JobUpdateRequest,
-    _: str = Depends(verify_webhook_secret)
-):
-    """Update job parameters"""
-    requestBody = updateData.dict()
-    
-    return JobUpdateResponse(message="Job parameters updated successfully")
-
-
 @router.post("/{jobId}/tasks/approve/start", response_model=TaskApprovalResponse)
 async def approve_task_start(
     jobId: str,
@@ -96,18 +84,15 @@ async def approve_task_start(
     taskData: Optional[JobUpdateRequest] = None
 ):
     """Approve any task to start - works for all tasks"""
-    requestBody = taskData.dict() if taskData else {}
-    
     print(f"Approve task start called for job {jobId}")
-    
     # Get job state from database
     job_state = await db_service.get_job_state(jobId)
     if not job_state:
         print(f"Job {jobId} not found in database")
         raise HTTPException(status_code=404, detail="Job not found")
     
-    current_task = job_state.get("current_task", "PENDING")
-    task_status = job_state.get("task_status", "PENDING")
+    current_task = job_state.current_task
+    task_status = job_state.task_status
     
     print(f"Job {jobId} current_task: {current_task}, task_status: {task_status}")
     
@@ -119,22 +104,22 @@ async def approve_task_start(
     if current_task == "PENDING":
         # Start audio extraction task
         print(f"Starting audio extraction task for job {jobId}")
-        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId)
         return TaskApprovalResponse(message="Audio extraction task started")
     elif current_task == "AUDIO_EXTRACTION":
         # Start transcript generation task
         print(f"Starting transcript generation task for job {jobId}")
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, taskData.parameters if taskData else None)
         return TaskApprovalResponse(message="Transcript generation task started")
     elif current_task == "TRANSCRIPT_GENERATION":
         # Start segmentation task
         print(f"Starting segmentation task for job {jobId}")
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, taskData.parameters if taskData else None)
         return TaskApprovalResponse(message="Segmentation task started")
     elif current_task == "SEGMENTATION":
         # Start question generation task
         print(f"Starting question generation task for job {jobId}")
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.parameters if taskData else None)
         return TaskApprovalResponse(message="Question generation task started")
     elif current_task == "QUESTION_GENERATION":
         # Question generation is the final task - no more tasks after this
@@ -146,33 +131,31 @@ async def approve_task_start(
 @router.post("/{jobId}/tasks/approve/continue", response_model=TaskApprovalResponse)
 async def approve_task_continue(
     jobId: str,
-    approvalData: JobUpdateRequest,
     background_tasks: BackgroundTasks,
     _: str = Depends(verify_webhook_secret)
 ):
     """Approve task completion and continue to next task"""
-    requestBody = approvalData.dict()
     
     # Get job state from database
     job_state = await db_service.get_job_state(jobId)
     if not job_state:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    current_task = job_state.get("current_task")
-    task_status = job_state.get("task_status")
+    current_task = job_state.current_task
+    task_status = job_state.task_status
     
     if task_status != "COMPLETED":
         raise HTTPException(status_code=400, detail=f"Current task {current_task} is not completed (status: {task_status})")
     
     # Determine next task and start it
     if current_task == "AUDIO_EXTRACTION":
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId)
         return TaskApprovalResponse(message="Transcript generation task started")
     elif current_task == "TRANSCRIPT_GENERATION":
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_segmentation_task, jobId)
         return TaskApprovalResponse(message="Segmentation task started")
     elif current_task == "SEGMENTATION":
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, requestBody)
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId)
         return TaskApprovalResponse(message="Question generation task started")
     elif current_task == "QUESTION_GENERATION":
         # Question generation is the final task - job is complete
@@ -202,6 +185,7 @@ async def abort_job(
 async def rerun_task(
     jobId: str,
     background_tasks: BackgroundTasks,
+    taskData: Optional[JobUpdateRequest] = None,
     _: str = Depends(verify_webhook_secret)
 ):
     """Rerun the current task"""
@@ -211,7 +195,7 @@ async def rerun_task(
     if not job_state:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    current_task = job_state.get("current_task")
+    current_task = job_state.current_task
     
     # Reset task status and rerun current task
     if current_task:
@@ -219,16 +203,16 @@ async def rerun_task(
         pass
     
     if current_task == "AUDIO_EXTRACTION":
-        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, None)
+        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId)
         return TaskRerunResponse(message="Audio extraction task restarted", jobId=jobId)
     elif current_task == "TRANSCRIPT_GENERATION":
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, None)
+        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, taskData.parameters if taskData else None)
         return TaskRerunResponse(message="Transcript generation task restarted", jobId=jobId)
     elif current_task == "SEGMENTATION":
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, None)
+        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, taskData.parameters if taskData else None)
         return TaskRerunResponse(message="Segmentation task restarted", jobId=jobId)
     elif current_task == "QUESTION_GENERATION":
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, None)
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.parameters if taskData else None)
         return TaskRerunResponse(message="Question generation task restarted", jobId=jobId)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
@@ -245,8 +229,8 @@ async def get_job_status(
     if not job_state:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    current_task = job_state.get("current_task", "UNKNOWN")
-    task_status = job_state.get("task_status", "UNKNOWN")
+    current_task = job_state.current_task
+    task_status = job_state.task_status
     
     # Convert task_status to TaskStatus enum if it's a valid value
     try:
