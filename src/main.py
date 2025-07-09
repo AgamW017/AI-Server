@@ -10,6 +10,7 @@ load_dotenv()
 
 from routes import router
 from services.database import db_service
+from middleware.error_logging import ErrorLoggingMiddleware
 
 # Import webhook routes
 import sys
@@ -31,6 +32,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Add error logging middleware (should be added first to catch all errors)
+app.add_middleware(ErrorLoggingMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
