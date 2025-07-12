@@ -7,10 +7,12 @@ from ai import (
     start_question_generation_task
 )
 from models import (
-    JobCreateRequest, 
+    JobCreateRequest,
+    JobState, 
     JobUpdateRequest, 
     JobCreateResponse,
     JobUpdateResponse,
+    TaskApprovalRequest,
     TaskApprovalResponse,
     JobAbortResponse,
     TaskRerunResponse,
@@ -81,27 +83,22 @@ async def approve_task_start(
     jobId: str,
     background_tasks: BackgroundTasks,
     _: str = Depends(verify_webhook_secret),
-    taskData: Optional[JobUpdateRequest] = None
+    taskData: Optional[TaskApprovalRequest] = None,
 ):
+    if not taskData:
+        raise HTTPException(status_code=400, detail="Task data is required for approval")
     """Approve any task to start - works for all tasks"""
     print(f"Approve task start called for job {jobId}")
-    # Get job state from database
-    job_state = await db_service.get_job_state(jobId)
-    if not job_state:
-        print(f"Job {jobId} not found in database")
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    current_task = job_state.current_task
-    task_status = job_state.task_status
-    
-    print(f"Job {jobId} current_task: {current_task}, task_status: {task_status}")
+    current_task = taskData.task
+    task_status = taskData.status
+    print(f"Job {jobId} current_task: {taskData.task}, task_status: {taskData.status}")
     
     # Only start if task is waiting for approval (PENDING or WAITING)
-    if task_status not in ["PENDING", "WAITING"]:
+    if task_status != "WAITING":
         raise HTTPException(status_code=400, detail=f"Current task {current_task} is not waiting for approval (status: {task_status})")
     
     # Start the appropriate task based on current_task
-    if current_task == "PENDING":
+    if current_task is None:
         # Start audio extraction task
         print(f"Starting audio extraction task for job {jobId}")
         background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId)
@@ -128,79 +125,19 @@ async def approve_task_start(
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
 
 
-@router.post("/{jobId}/tasks/approve/continue", response_model=TaskApprovalResponse)
-async def approve_task_continue(
-    jobId: str,
-    background_tasks: BackgroundTasks,
-    _: str = Depends(verify_webhook_secret)
-):
-    """Approve task completion and continue to next task"""
-    
-    # Get job state from database
-    job_state = await db_service.get_job_state(jobId)
-    if not job_state:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    current_task = job_state.current_task
-    task_status = job_state.task_status
-    
-    if task_status != "COMPLETED":
-        raise HTTPException(status_code=400, detail=f"Current task {current_task} is not completed (status: {task_status})")
-    
-    # Determine next task and start it
-    if current_task == "AUDIO_EXTRACTION":
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId)
-        return TaskApprovalResponse(message="Transcript generation task started")
-    elif current_task == "TRANSCRIPT_GENERATION":
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId)
-        return TaskApprovalResponse(message="Segmentation task started")
-    elif current_task == "SEGMENTATION":
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId)
-        return TaskApprovalResponse(message="Question generation task started")
-    elif current_task == "QUESTION_GENERATION":
-        # Question generation is the final task - job is complete
-        raise HTTPException(status_code=400, detail="Question generation is the final task. Job is complete.")
-    else:
-        raise HTTPException(status_code=400, detail=f"No next task available for current task: {current_task}")
-
-
-@router.post("/{jobId}/abort", response_model=JobAbortResponse)
-async def abort_job(
-    jobId: str,
-    _: str = Depends(verify_webhook_secret)
-):
-    """Abort the job"""
-    
-    # Get job state from database
-    job_state = await db_service.get_job_state(jobId)
-    if not job_state:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    # Note: Job status updates are handled by the external system, not this read-only service
-    
-    return JobAbortResponse(message="Job aborted successfully")
-
-
 @router.post("/{jobId}/tasks/rerun", response_model=TaskRerunResponse)
 async def rerun_task(
     jobId: str,
     background_tasks: BackgroundTasks,
-    taskData: Optional[JobUpdateRequest] = None,
+    taskData: JobState,
     _: str = Depends(verify_webhook_secret)
 ):
     """Rerun the current task"""
+    current_task = taskData.currentTask
+    task_status = taskData.taskStatus
     
-    # Get job state from database
-    job_state = await db_service.get_job_state(jobId)
-    if not job_state:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    current_task = job_state.current_task
-    
-    # Reset task status and rerun current task
-    if current_task:
-        # Note: Job status updates are handled by the external system, not this read-only service
-        pass
+    if task_status != "COMPLETED":
+        raise HTTPException(status_code=400, detail=f"Current task {current_task} is not completed (status: {task_status})")
     
     if current_task == "AUDIO_EXTRACTION":
         background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId)
@@ -216,30 +153,3 @@ async def rerun_task(
         return TaskRerunResponse(message="Question generation task restarted", jobId=jobId)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
-
-
-@router.get("/{jobId}/status", response_model=JobStatusResponse)
-async def get_job_status(
-    jobId: str,
-    _: str = Depends(verify_webhook_secret)
-):
-    """Get current job status and task information"""
-    # Get job state from database
-    job_state = await db_service.get_job_state(jobId)
-    if not job_state:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    current_task = job_state.current_task
-    task_status = job_state.task_status
-    
-    # Convert task_status to TaskStatus enum if it's a valid value
-    try:
-        status_enum = TaskStatus(task_status)
-    except ValueError:
-        status_enum = TaskStatus.PENDING
-    
-    return JobStatusResponse(
-        jobId=jobId,
-        status=status_enum,
-        currentTask=current_task
-    )

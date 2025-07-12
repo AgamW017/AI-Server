@@ -76,7 +76,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
                 "user_agent": request.headers.get("user-agent", "Unknown"),
             }
             
-            error_logger.error(json.dumps(error_info))
+            error_logger.error(json.dumps(error_info, indent=2))
             
         except Exception as log_error:
             # Fallback logging if structured logging fails
@@ -98,7 +98,7 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
                 "traceback": traceback.format_exc()
             }
             
-            error_logger.error(json.dumps(error_info))
+            error_logger.error(json.dumps(error_info, indent=2))
             
         except Exception as log_error:
             # Fallback logging if structured logging fails

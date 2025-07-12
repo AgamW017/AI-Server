@@ -1,4 +1,5 @@
 import requests
+import os
 from typing import Optional, Dict, Any
 
 from models import (
@@ -21,29 +22,31 @@ from services.question_generation import QuestionGenerationService
 from services.storage import GCloudStorageService
 from services.database import db_service
 
+# Get webhook configuration from environment
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL environment variable is required")
+if not WEBHOOK_SECRET:
+    raise ValueError("WEBHOOK_SECRET environment variable is required")
+
+# Now we can safely use these as strings
+webhook_url: str = WEBHOOK_URL
+webhook_secret: str = WEBHOOK_SECRET
+
 # Note: Removed the old JobState class and process_video_async function
 # as they used in-memory job_states which is now replaced with MongoDB persistence
 
-async def start_audio_extraction_task(job_id: str) -> Dict[str, Any]:
-    """Start audio extraction task - READ-ONLY database access"""
+async def start_audio_extraction_task(job_id: str, job_data) -> Dict[str, Any]:
     print(f"start_audio_extraction_task called for job {job_id}")
-    
-    # Get job state from database (READ-ONLY) - now returns Pydantic object
-    job_state = await db_service.get_job_state(job_id)
-    if not job_state:
-        error_msg = f"Job {job_id} not found"
-        print(error_msg)
-        raise ValueError(error_msg)
-    
-    job_data = job_state.job_data
-    print(f"Job data found for {job_id}: {job_data.url}")
-    
-    # Ensure webhookUrl has a protocol
-    webhook_url = job_data.webhookUrl
-    if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
-        webhook_url = "http://" + webhook_url
 
-    print(f"Webhook URL: {webhook_url}")
+    # Use webhook URL from environment
+    current_webhook_url = webhook_url
+    if not current_webhook_url.startswith("http://") and not current_webhook_url.startswith("https://"):
+        current_webhook_url = "http://" + current_webhook_url
+
+    print(f"Webhook URL: {current_webhook_url}")
 
     audio_service = AudioService()
     storage_service = GCloudStorageService()
@@ -51,7 +54,7 @@ async def start_audio_extraction_task(job_id: str) -> Dict[str, Any]:
     try:
         # Send webhook - Starting audio extraction
         audio_data = AudioData(status=TaskStatus.RUNNING)
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "AUDIO_EXTRACTION", audio_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "AUDIO_EXTRACTION", audio_data)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
@@ -73,7 +76,7 @@ async def start_audio_extraction_task(job_id: str) -> Dict[str, Any]:
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "AUDIO_EXTRACTION", audio_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "AUDIO_EXTRACTION", audio_data)
         
         return {
             "status": "COMPLETED",
@@ -84,62 +87,36 @@ async def start_audio_extraction_task(job_id: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"Error in audio extraction: {str(e)}")
         error_data = AudioData(status=TaskStatus.FAILED, error=str(e))
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "AUDIO_EXTRACTION", error_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "AUDIO_EXTRACTION", error_data)
         raise
 
 async def start_transcript_generation_task(job_id: str, approval_data: TranscriptParameters) -> Dict[str, Any]:
     """Start transcript generation task - READ-ONLY database access"""
     print(f"start_transcript_generation_task called for job {job_id}")
-    
-    # Get job state from database (READ-ONLY)
-    job_state = await db_service.get_job_state(job_id)
-    if not job_state:
-        error_msg = f"Job {job_id} not found"
-        print(error_msg)
-        raise ValueError(error_msg)
-    
-    job_data = job_state.job_data
-    audio_file_path = job_state.audio_file_path
-    
-    if not audio_file_path:
+
+    if not approval_data.file:
         error_msg = f"No audio file found for job {job_id}"
         print(error_msg)
         raise ValueError(error_msg)
     
-    # Ensure webhookUrl has a protocol
-    webhook_url = job_data.webhookUrl
-    if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
-        webhook_url = "http://" + webhook_url
+    # Use webhook URL from environment
+    current_webhook_url = webhook_url
+    if not current_webhook_url.startswith("http://") and not current_webhook_url.startswith("https://"):
+        current_webhook_url = "http://" + current_webhook_url
 
     transcription_service = TranscriptionService()
     storage_service = GCloudStorageService()
     
     try:
-        
-        # Get original transcript parameters
-        transcript_params = job_data.transcriptParameters
-        
-        # Merge with new parameters if provided
-        if approval_data and transcript_params:
-            # Create a new instance with updated parameters
-            transcript_params = transcript_params.model_copy(
-                update=approval_data.model_dump(exclude_unset=True)
-            )
-        elif approval_data:
-            # If no original parameters, use the approval data
-            transcript_params = approval_data
-            
-        print(f"Transcript parameters: {transcript_params}")
-        
         # Send webhook - Starting transcription
         transcript_data = TranscriptGenerationData(status=TaskStatus.RUNNING)
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "TRANSCRIPT_GENERATION", transcript_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "TRANSCRIPT_GENERATION", transcript_data)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
         # Generate transcript from audio
         print("Generating transcript from audio...")
-        transcript = await transcription_service.transcribe(audio_file_path, transcript_params)
+        transcript = await transcription_service.transcribe(approval_data.file, approval_data.modelSize, approval_data.language)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
@@ -152,12 +129,12 @@ async def start_transcript_generation_task(job_id: str, approval_data: Transcrip
             status=TaskStatus.COMPLETED,
             fileName=transcript_file_name if transcript_file_url else None,
             fileUrl=transcript_file_url,
-            newParameters=transcript_params
+            parameters= approval_data
         )
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "TRANSCRIPT_GENERATION", transcript_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "TRANSCRIPT_GENERATION", transcript_data)
         
         return {
             "status": "COMPLETED",
@@ -172,40 +149,26 @@ async def start_transcript_generation_task(job_id: str, approval_data: Transcrip
         error_data = TranscriptGenerationData(status=TaskStatus.FAILED, error=str(e))
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "TRANSCRIPT_GENERATION", error_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "TRANSCRIPT_GENERATION", error_data)
         raise
 
 async def start_segmentation_task(job_id: str, approval_data: Optional[SegmentationParameters] = None) -> Dict[str, Any]:
     """Start segmentation task - READ-ONLY database access"""
     print(f"start_segmentation_task called for job {job_id}")
-    
-    # Get job state from database (READ-ONLY)
-    job_state = await db_service.get_job_state(job_id)
-    if not job_state:
-        error_msg = f"Job {job_id} not found"
-        print(error_msg)
-        raise ValueError(error_msg)
-    
-    job_data = job_state.job_data
-    
     # Get transcript from the specified transcription run using usePrevious (default to 0 if not provided)
     transcript = None
-    if approval_data and job_state.task_data:
-        use_previous = approval_data.usePrevious if approval_data.usePrevious is not None else 0
-        if (job_state.task_data.transcriptGeneration and 
-            len(job_state.task_data.transcriptGeneration) > use_previous):
-            transcription_run = job_state.task_data.transcriptGeneration[use_previous]
-            if transcription_run.status == TaskStatus.COMPLETED and transcription_run.fileUrl:
+    if approval_data:
+        if approval_data.file:
                 # Download the transcript file from GCloud bucket
-                print(f"Downloading transcript from: {transcription_run.fileUrl}")
+                print(f"Downloading transcript from: {approval_data.file}")
                 try:
                     import requests
-                    response = requests.get(transcription_run.fileUrl)
+                    response = requests.get(approval_data.file)
                     response.raise_for_status()
                     transcript = response.text
                     print(f"Successfully downloaded transcript: {len(transcript)} characters")
                 except Exception as e:
-                    error_msg = f"Failed to download transcript from {transcription_run.fileUrl}: {str(e)}"
+                    error_msg = f"Failed to download transcript from {approval_data.file}: {str(e)}"
                     print(error_msg)
                     raise ValueError(error_msg)
     
@@ -214,40 +177,26 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Segmentat
         print(error_msg)
         raise ValueError(error_msg)
     
-    # Ensure webhookUrl has a protocol
-    webhook_url = job_data.webhookUrl
-    if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
-        webhook_url = "http://" + webhook_url
+    # Use webhook URL from environment
+    current_webhook_url = webhook_url
+    if not current_webhook_url.startswith("http://") and not current_webhook_url.startswith("https://"):
+        current_webhook_url = "http://" + current_webhook_url
 
     storage_service = GCloudStorageService()
     
     try:
-        # Handle approval data for parameter updates
-        segmentation_params = job_data.segmentationParameters
-        
-        if approval_data:
-            # Create new parameters from approval data, excluding usePrevious
-            approval_params_dict = approval_data.model_dump(exclude={'usePrevious'}, exclude_unset=True)
-            
-            if segmentation_params:
-                # Update existing parameters
-                segmentation_params = segmentation_params.model_copy(update=approval_params_dict)
-            else:
-                # Create new parameters from approval data
-                segmentation_params = SegmentationParameters(**approval_params_dict)
-        
-        print(f"Segmentation parameters: {segmentation_params}")
+        print(f"Segmentation parameters: {SegmentationParameters}")
         
         # Send webhook - Starting segmentation
         segmentation_data = SegmentationData(status=TaskStatus.RUNNING)
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "SEGMENTATION", segmentation_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", segmentation_data)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
         # Segment the transcript
         print("Segmenting transcript...")
         segmentation_service = SegmentationService()
-        segments = await segmentation_service.segment_transcript(transcript, segmentation_params)
+        segments = await segmentation_service.segment_transcript(transcript, approval_data)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
@@ -260,12 +209,12 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Segmentat
             status=TaskStatus.COMPLETED,
             fileName=segments_file_name if segments_file_url else None,
             fileUrl=segments_file_url,
-            newParameters=segmentation_params
+            parameters=approval_data
         )
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "SEGMENTATION", segmentation_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", segmentation_data)
         
         return {
             "status": "COMPLETED",
@@ -280,43 +229,30 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Segmentat
         error_data = SegmentationData(status=TaskStatus.FAILED, error=str(e))
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "SEGMENTATION", error_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", error_data)
         raise
 
 async def start_question_generation_task(job_id: str, approval_data: Optional[QuestionGenerationParameters] = None) -> Dict[str, Any]:
     """Start question generation task - READ-ONLY database access"""
     print(f"start_question_generation_task called for job {job_id}")
-    
-    # Get job state from database (READ-ONLY)
-    job_state = await db_service.get_job_state(job_id)
-    if not job_state:
-        error_msg = f"Job {job_id} not found"
-        print(error_msg)
-        raise ValueError(error_msg)
-    
-    job_data = job_state.job_data
-    
+
     # Get segments from the specified segmentation run using usePrevious (default to 0 if not provided)
     segments = None
-    if approval_data and job_state.task_data:
-        use_previous = approval_data.usePrevious if approval_data.usePrevious is not None else 0
-        if (job_state.task_data.segmentation and 
-            len(job_state.task_data.segmentation) > use_previous):
-            segmentation_run = job_state.task_data.segmentation[use_previous]
-            if segmentation_run.status == TaskStatus.COMPLETED and segmentation_run.fileUrl:
+    if approval_data :
+            if approval_data.file:
                 # Download the segments file from GCloud bucket
-                print(f"Downloading segments from: {segmentation_run.fileUrl}")
+                print(f"Downloading segments from: {approval_data.file}")
                 storage_service = GCloudStorageService()
                 try:
                     # Download and parse the segments JSON file
                     import json
                     import requests
-                    response = requests.get(segmentation_run.fileUrl)
+                    response = requests.get(approval_data.file)
                     response.raise_for_status()
                     segments = json.loads(response.text)
                     print(f"Successfully downloaded segments: {len(segments) if isinstance(segments, list) else 'dict'}")
                 except Exception as e:
-                    error_msg = f"Failed to download segments from {segmentation_run.fileUrl}: {str(e)}"
+                    error_msg = f"Failed to download segments from {approval_data.file}: {str(e)}"
                     print(error_msg)
                     raise ValueError(error_msg)
     
@@ -325,33 +261,17 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
         print(error_msg)
         raise ValueError(error_msg)
     
-    # Ensure webhookUrl has a protocol
-    webhook_url = job_data.webhookUrl
-    if not webhook_url.startswith("http://") and not webhook_url.startswith("https://"):
-        webhook_url = "http://" + webhook_url
+    # Use webhook URL from environment
+    current_webhook_url = webhook_url
+    if not current_webhook_url.startswith("http://") and not current_webhook_url.startswith("https://"):
+        current_webhook_url = "http://" + current_webhook_url
         
     storage_service = GCloudStorageService()
     
     try:
-        # Handle approval data for parameter updates
-        question_params = job_data.questionGenerationParameters
-        
-        if approval_data:
-            # Create new parameters from approval data, excluding usePrevious
-            approval_params_dict = approval_data.model_dump(exclude={'usePrevious'}, exclude_unset=True)
-            
-            if question_params:
-                # Update existing parameters
-                question_params = question_params.model_copy(update=approval_params_dict)
-            else:
-                # Create new parameters from approval data
-                question_params = QuestionGenerationParameters(**approval_params_dict)
-        
-        print(f"Question generation parameters: {question_params}")
-        
         # Send webhook - Starting question generation
         question_gen_data = QuestionGenerationData(status=TaskStatus.RUNNING)
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "QUESTION_GENERATION", question_gen_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
@@ -381,7 +301,7 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
         question_service = QuestionGenerationService()
         questions = await question_service.generate_questions(
             segments=segments_dict,
-            question_params=question_params
+            question_params=approval_data,
         )
         
         # Note: Job status updates are handled by the external system, not this read-only service
@@ -396,12 +316,12 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
                 status=TaskStatus.COMPLETED,
                 fileName=questions_file_name if questions_file_url else None,
                 fileUrl=questions_file_url,
-                newParameters=question_params
+                parameters=approval_data
             )
             
             # Note: Job status updates are handled by the external system, not this read-only service
             
-            await send_webhook(webhook_url, job_id, job_data.webhookSecret, "QUESTION_GENERATION", question_gen_data)
+            await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
             
             return {
                 "status": "COMPLETED",
@@ -415,7 +335,7 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
             )
             # Note: Job status updates are handled by the external system, not this read-only service
             
-            await send_webhook(webhook_url, job_id, job_data.webhookSecret, "QUESTION_GENERATION", question_gen_data)
+            await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
             
             return {
                 "status": "COMPLETED",
@@ -430,7 +350,7 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
         error_data = QuestionGenerationData(status=TaskStatus.FAILED, error=str(e))
         # Note: Job status updates are handled by the external system, not this read-only service
         
-        await send_webhook(webhook_url, job_id, job_data.webhookSecret, "QUESTION_GENERATION", error_data)
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", error_data)
         raise
 
 async def send_webhook(webhook_url: str, job_id: str, webhook_secret: str, task: str, data):

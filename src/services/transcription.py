@@ -1,6 +1,7 @@
 import os
 import asyncio
 from typing import Optional
+from pydantic import HttpUrl
 import whisper
 from models import TranscriptParameters
 
@@ -62,7 +63,7 @@ class TranscriptionService:
         """
         return language in SUPPORTED_LANGUAGES
     
-    async def transcribe(self, audio_path: str, transcript_params: Optional[TranscriptParameters] = None) -> str:
+    async def transcribe(self, audio_path: str, model_size: Optional[str] = 'small',  language: Optional[str] = 'en') -> str:
         """
         Transcribes an audio file using Whisper package.
         
@@ -76,26 +77,15 @@ class TranscriptionService:
         Raises:
             Exception: If transcription fails
         """
-        if not os.path.exists(audio_path):
-            raise Exception(f"Input audio file not found: {audio_path}")
-        
-        # Extract parameters or use defaults
-        if transcript_params:
-            language = transcript_params.language.value if transcript_params.language else 'en'
-            model_size = transcript_params.model or 'small'
-        else:
-            language = 'en'  # Default to English
-            model_size = 'small'  # Default to small model
-        
         # Validate language support
-        if not self._is_language_supported(language):
+        if not self._is_language_supported(language if language else 'en'):
             raise Exception(
                 f"Unsupported language: {language}. Supported languages: {', '.join(SUPPORTED_LANGUAGES)}"
             )
         
         try:
             # Load the Whisper model with specified size
-            await self._load_model(model_size)
+            await self._load_model(model_size if model_size else 'small')
             
             print(f"Starting Whisper transcription for: {audio_path} (model: {model_size}, language: {language})")
             

@@ -2,35 +2,19 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
-from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 from routes import router
-from services.database import db_service
 from middleware.error_logging import ErrorLoggingMiddleware
-
-# Import webhook routes
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from webhook_routes import router as webhook_router
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    await db_service.connect()
-    yield
-    # Shutdown
-    await db_service.disconnect()
 
 # Create FastAPI app
 app = FastAPI(
     title="AI Server",
-    description="FastAPI-based AI processing server with webhook integration and MongoDB persistence",
-    version="1.0.0",
-    lifespan=lifespan
+    description="FastAPI-based AI processing server with webhook integration",
+    version="1.0.0"
 )
 
 # Add error logging middleware (should be added first to catch all errors)
@@ -47,8 +31,6 @@ app.add_middleware(
 
 # Include routers
 app.include_router(router)
-app.include_router(webhook_router)
-
 
 @app.get("/")
 async def root():
@@ -59,19 +41,17 @@ async def root():
         "endpoints": {
             "jobs": [
                 "POST /jobs",
-                "POST /jobs/{job_id}/update",
                 "POST /jobs/{job_id}/tasks/approve/start",
-                "POST /jobs/{job_id}/tasks/approve/continue",
+                "POST /jobs/{job_id}/tasks/approve/continue", 
                 "POST /jobs/{job_id}/abort",
-                "POST /jobs/{job_id}/tasks/rerun"
-            ],
-            "webhooks": [
-                "POST /genAI/webhook"
+                "POST /jobs/{job_id}/tasks/rerun",
+                "GET /jobs/{job_id}/status"
             ]
         },
-        "authentication": {
-            "header": "X-Webhook-Secret or x-webhook-signature",
-            "test_secret": "test-secret"
+        "webhook_info": {
+            "description": "AI Server sends webhooks to main server after each task completion",
+            "main_server_endpoint": "Main server's /genAI/webhook endpoint",
+            "authentication": "x-webhook-signature header"
         }
     }
 

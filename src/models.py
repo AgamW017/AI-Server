@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, validator
 from enum import Enum
 from datetime import datetime
 
@@ -12,23 +12,23 @@ class LanguageType(str, Enum):
     HINDI = "hi"
     
 class TranscriptParameters(BaseModel):
-    usePrevious: Optional[int] = None
     language: Optional[LanguageType] = None
-    model: Optional[str] = None
+    modelSize: Optional[str] = None
+    file: Optional[str] = None
 
 class SegmentationParameters(BaseModel):
-    usePrevious: Optional[int] = None
     lambda_param: Optional[float] = Field(None, alias="lambda")
     epochs: Optional[int] = None
     model: Optional[str] = None
+    file: Optional[str] = None
 
 class QuestionGenerationParameters(BaseModel):
-    usePrevious: Optional[int] = None
     model: Optional[str] = None
     SOL: Optional[int] = None
     SML: Optional[int] = None
     NAT: Optional[int] = None
     DES: Optional[int] = None
+    file: Optional[str] = None
 
 class UploadParameters(BaseModel):
     courseId: str = Field(...)
@@ -45,6 +45,13 @@ class TaskStatus(str, Enum):
     COMPLETED = 'COMPLETED'
     FAILED = 'FAILED'
     ABORTED = 'ABORTED'
+
+class JobStatus(BaseModel):
+    audioExtraction: TaskStatus = TaskStatus.PENDING
+    transcriptGeneration: TaskStatus = TaskStatus.PENDING
+    segmentation: TaskStatus = TaskStatus.PENDING
+    questionGeneration: TaskStatus = TaskStatus.PENDING
+    uploadContent: TaskStatus = TaskStatus.PENDING
 
 class QuestionOption(BaseModel):
     text: str
@@ -77,7 +84,7 @@ class TranscriptGenerationData(BaseModel):
     error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
-    newParameters: Optional[TranscriptParameters] = None
+    parameters: Optional[TranscriptParameters] = None
     
     def dict(self, **kwargs):
         # Exclude None values from the dictionary
@@ -89,7 +96,7 @@ class SegmentationData(BaseModel):
     error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
-    newParameters: Optional[SegmentationParameters] = None
+    parameters: Optional[SegmentationParameters] = None
     
     def dict(self, **kwargs):
         # Exclude None values from the dictionary
@@ -101,7 +108,7 @@ class QuestionGenerationData(BaseModel):
     error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
-    newParameters: Optional[QuestionGenerationParameters] = None
+    parameters: Optional[QuestionGenerationParameters] = None
     
     def dict(self, **kwargs):
         # Exclude None values from the dictionary
@@ -111,7 +118,7 @@ class QuestionGenerationData(BaseModel):
 # New database models matching TypeScript interfaces
 class GenAI(BaseModel):
     type: JobType
-    url: HttpUrl
+    url: str
     transcriptParameters: Optional[TranscriptParameters] = None
     segmentationParameters: Optional[SegmentationParameters] = None
     questionGenerationParameters: Optional[QuestionGenerationParameters] = None
@@ -121,9 +128,7 @@ class GenAIBody(GenAI):
     id: Optional[str] = Field(None, alias="_id")
     userId: str
     createdAt: datetime
-    jobStatus: TaskStatus
-    webhookUrl: str
-    webhookSecret: str
+    jobStatus: JobStatus
     currentTask: Optional[str] = None
 
 class TaskData(BaseModel):
@@ -138,11 +143,11 @@ class TaskData(BaseModel):
 class GenAIResponse(BaseModel):
     _id: Optional[str] = None
     type: JobType = Field(...)
-    url: HttpUrl = Field(...)
+    url: str = Field(...)
 
 class JobBody(BaseModel):
     type: JobType = Field(...)
-    url: HttpUrl = Field(...)
+    url: str = Field(...)
     transcriptParameters: Optional[TranscriptParameters] = None
     segmentationParameters: Optional[SegmentationParameters] = None
     questionGenerationParameters: Optional[QuestionGenerationParameters] = None
@@ -151,13 +156,18 @@ class JobCreateRequest(BaseModel):
     data: JobBody
     userId: str
     jobId: str
-    webhookUrl: str
-    webhookSecret: str
-    # Add other job fields as needed
 
 class JobUpdateRequest(BaseModel):
+    
     parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
 
+class TaskApprovalRequest(BaseModel):
+    jobId: str
+    task: str
+    status = TaskStatus
+    parameters: TranscriptParameters | SegmentationParameters | QuestionGenerationParameters
+    file: Optional[str] = None
+    
 class WebhookRequest(BaseModel):
     task: str
     status: str
@@ -213,11 +223,8 @@ class QuestionGenerationRequest(BaseModel):
 
 # Job state model for combining data
 class JobState(BaseModel):
-    job_data: GenAIBody
-    task_data: Optional[TaskData] = None
-    current_task: str
-    task_status: TaskStatus
-    audio_file_path: Optional[str] = None
-    transcript: Optional[str] = None
-    segments: Optional[List[Dict[str, Any]]] = None
-    questions: Optional[List[GeneratedQuestion]] = None
+    currentTask: str
+    taskStatus: TaskStatus
+    parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
+    file: Optional[str] = None
+    

@@ -30,7 +30,7 @@ A FastAPI-based mock server that implements the AI server which comunicates with
 ## Authentication
 
 All endpoints require authentication via headers:
-- Job endpoints: `X-Webhook-Secret: test-secret`
+- Job endpoints: `x-webhook-signature: test-secret`
 - Webhook endpoint: `x-webhook-signature: test-secret`
 
 ## Installation
@@ -59,13 +59,13 @@ You can test the endpoints using curl:
 # Create a job
 curl -X POST "http://localhost:8000/jobs" \
   -H "Content-Type: application/json" \
-  -H "X-Webhook-Secret: test-secret" \
+  -H "x-webhook-signature: test-secret" \
   -d '{"webhookUrl": "http://example.com/webhook", "webhookSecret": "secret"}'
 
 # Update a job
 curl -X POST "http://localhost:8000/jobs/job_12345/update" \
   -H "Content-Type: application/json" \
-  -H "X-Webhook-Secret: test-secret" \
+  -H "x-webhook-signature: test-secret" \
   -d '{"parameters": {"key": "value"}}'
 
 # Send webhook
