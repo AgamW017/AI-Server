@@ -1,5 +1,6 @@
 import requests
 import os
+import uuid
 from typing import Optional, Dict, Any
 
 from models import (
@@ -64,8 +65,18 @@ async def start_audio_extraction_task(job_id: str, job_data) -> Dict[str, Any]:
         print(f"Audio extracted successfully to: {audio_file_path}")
         
         # Upload audio file to Google Cloud Storage
-        file_name = f"audio/{job_id}_audio.wav"
+        run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
+        file_name = f"audio/{job_id}_{run_id}_audio.wav"
+        print(f"Uploading audio file to GCS with name: {file_name}")
         file_url = await storage_service.upload_file(audio_file_path, file_name, "audio/wav")
+        
+        if file_url:
+            print(f"Audio file uploaded successfully to: {file_url}")
+        else:
+            print(f"Warning: Audio file upload returned None, but may have succeeded. File name: {file_name}")
+            # For debugging, let's try to get the URL directly
+            file_url = storage_service.get_file_url(file_name)
+            print(f"Attempting to get file URL directly: {file_url}")
         
         # Send webhook - Audio extraction completed
         audio_data = AudioData(
@@ -90,11 +101,11 @@ async def start_audio_extraction_task(job_id: str, job_data) -> Dict[str, Any]:
         await send_webhook(current_webhook_url, job_id, webhook_secret, "AUDIO_EXTRACTION", error_data)
         raise
 
-async def start_transcript_generation_task(job_id: str, approval_data: TranscriptParameters) -> Dict[str, Any]:
+async def start_transcript_generation_task(job_id: str, file: str, approval_data: TranscriptParameters) -> Dict[str, Any]:
     """Start transcript generation task - READ-ONLY database access"""
     print(f"start_transcript_generation_task called for job {job_id}")
 
-    if not approval_data.file:
+    if not file:
         error_msg = f"No audio file found for job {job_id}"
         print(error_msg)
         raise ValueError(error_msg)
@@ -116,12 +127,13 @@ async def start_transcript_generation_task(job_id: str, approval_data: Transcrip
         
         # Generate transcript from audio
         print("Generating transcript from audio...")
-        transcript = await transcription_service.transcribe(approval_data.file, approval_data.modelSize, approval_data.language)
+        transcript = await transcription_service.transcribe(file, approval_data.modelSize, approval_data.language)
         
         # Note: Job status updates are handled by the external system, not this read-only service
         
         # Upload transcript to Google Cloud Storage
-        transcript_file_name = f"transcripts/{job_id}_transcript.txt"
+        run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
+        transcript_file_name = f"transcripts/{job_id}_{run_id}_transcript.txt"
         transcript_file_url = await storage_service.upload_text_content(transcript, transcript_file_name, "text/plain")
         
         # Send webhook - Transcription completed
@@ -152,23 +164,23 @@ async def start_transcript_generation_task(job_id: str, approval_data: Transcrip
         await send_webhook(current_webhook_url, job_id, webhook_secret, "TRANSCRIPT_GENERATION", error_data)
         raise
 
-async def start_segmentation_task(job_id: str, approval_data: Optional[SegmentationParameters] = None) -> Dict[str, Any]:
+async def start_segmentation_task(job_id: str, file: str, approval_data: Optional[SegmentationParameters] = None) -> Dict[str, Any]:
     """Start segmentation task - READ-ONLY database access"""
     print(f"start_segmentation_task called for job {job_id}")
     # Get transcript from the specified transcription run using usePrevious (default to 0 if not provided)
     transcript = None
     if approval_data:
-        if approval_data.file:
+        if file:
                 # Download the transcript file from GCloud bucket
-                print(f"Downloading transcript from: {approval_data.file}")
+                print(f"Downloading transcript from: {file}")
                 try:
                     import requests
-                    response = requests.get(approval_data.file)
+                    response = requests.get(file)
                     response.raise_for_status()
                     transcript = response.text
                     print(f"Successfully downloaded transcript: {len(transcript)} characters")
                 except Exception as e:
-                    error_msg = f"Failed to download transcript from {approval_data.file}: {str(e)}"
+                    error_msg = f"Failed to download transcript from {file}: {str(e)}"
                     print(error_msg)
                     raise ValueError(error_msg)
     
@@ -201,7 +213,8 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Segmentat
         # Note: Job status updates are handled by the external system, not this read-only service
         
         # Upload segments to Google Cloud Storage
-        segments_file_name = f"segments/{job_id}_segments.json"
+        run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
+        segments_file_name = f"segments/{job_id}_{run_id}_segments.json"
         segments_file_url = await storage_service.upload_json_content(segments, segments_file_name)
         
         # Send webhook - Segmentation completed
@@ -232,27 +245,27 @@ async def start_segmentation_task(job_id: str, approval_data: Optional[Segmentat
         await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", error_data)
         raise
 
-async def start_question_generation_task(job_id: str, approval_data: Optional[QuestionGenerationParameters] = None) -> Dict[str, Any]:
+async def start_question_generation_task(job_id: str, file: str, approval_data: Optional[QuestionGenerationParameters] = None) -> Dict[str, Any]:
     """Start question generation task - READ-ONLY database access"""
     print(f"start_question_generation_task called for job {job_id}")
 
     # Get segments from the specified segmentation run using usePrevious (default to 0 if not provided)
     segments = None
     if approval_data :
-            if approval_data.file:
+            if file:
                 # Download the segments file from GCloud bucket
-                print(f"Downloading segments from: {approval_data.file}")
+                print(f"Downloading segments from: {file}")
                 storage_service = GCloudStorageService()
                 try:
                     # Download and parse the segments JSON file
                     import json
                     import requests
-                    response = requests.get(approval_data.file)
+                    response = requests.get(file)
                     response.raise_for_status()
                     segments = json.loads(response.text)
                     print(f"Successfully downloaded segments: {len(segments) if isinstance(segments, list) else 'dict'}")
                 except Exception as e:
-                    error_msg = f"Failed to download segments from {approval_data.file}: {str(e)}"
+                    error_msg = f"Failed to download segments from {file}: {str(e)}"
                     print(error_msg)
                     raise ValueError(error_msg)
     
@@ -307,7 +320,8 @@ async def start_question_generation_task(job_id: str, approval_data: Optional[Qu
         # Note: Job status updates are handled by the external system, not this read-only service
         
         # Upload questions to Google Cloud Storage
-        questions_file_name = f"questions/{job_id}_questions.json"
+        run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
+        questions_file_name = f"questions/{job_id}_{run_id}_questions.json"
         questions_file_url = await storage_service.upload_json_content(questions, questions_file_name)
         
         # Send webhook - Question generation completed

@@ -1,5 +1,7 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import uvicorn
 import os
 from dotenv import load_dotenv
@@ -16,6 +18,17 @@ app = FastAPI(
     description="FastAPI-based AI processing server with webhook integration",
     version="1.0.0"
 )
+
+# Add custom validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"Validation error on {request.method} {request.url}")
+    print(f"Request body: {await request.body()}")
+    print(f"Validation errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": str(await request.body())}
+    )
 
 # Add error logging middleware (should be added first to catch all errors)
 app.add_middleware(ErrorLoggingMiddleware)

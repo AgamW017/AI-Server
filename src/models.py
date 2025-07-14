@@ -1,7 +1,13 @@
 from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, HttpUrl, validator
 from enum import Enum
 from datetime import datetime
+
+class TaskType(str, Enum):
+    AUDIO_EXTRACTION = "AUDIO_EXTRACTION"
+    TRANSCRIPT_GENERATION = "TRANSCRIPT_GENERATION"
+    SEGMENTATION = "SEGMENTATION"
+    QUESTION_GENERATION = "QUESTION_GENERATION"
 
 class JobType(str, Enum):
     VIDEO  = "VIDEO"
@@ -14,13 +20,11 @@ class LanguageType(str, Enum):
 class TranscriptParameters(BaseModel):
     language: Optional[LanguageType] = None
     modelSize: Optional[str] = None
-    file: Optional[str] = None
 
 class SegmentationParameters(BaseModel):
     lambda_param: Optional[float] = Field(None, alias="lambda")
     epochs: Optional[int] = None
     model: Optional[str] = None
-    file: Optional[str] = None
 
 class QuestionGenerationParameters(BaseModel):
     model: Optional[str] = None
@@ -28,7 +32,6 @@ class QuestionGenerationParameters(BaseModel):
     SML: Optional[int] = None
     NAT: Optional[int] = None
     DES: Optional[int] = None
-    file: Optional[str] = None
 
 class UploadParameters(BaseModel):
     courseId: str = Field(...)
@@ -157,17 +160,6 @@ class JobCreateRequest(BaseModel):
     userId: str
     jobId: str
 
-class JobUpdateRequest(BaseModel):
-    
-    parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
-
-class TaskApprovalRequest(BaseModel):
-    jobId: str
-    task: str
-    status = TaskStatus
-    parameters: TranscriptParameters | SegmentationParameters | QuestionGenerationParameters
-    file: Optional[str] = None
-    
 class WebhookRequest(BaseModel):
     task: str
     status: str
@@ -223,8 +215,9 @@ class QuestionGenerationRequest(BaseModel):
 
 # Job state model for combining data
 class JobState(BaseModel):
-    currentTask: str
+    currentTask: TaskType | None = None
     taskStatus: TaskStatus
+    url: Optional[str] = None
     parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
     file: Optional[str] = None
     
