@@ -4,7 +4,6 @@ import uuid
 from typing import Optional, Dict, Any
 
 from models import (
-    JobCreateRequest, 
     TaskStatus, 
     AudioData, 
     TranscriptGenerationData, 
@@ -13,15 +12,12 @@ from models import (
     TranscriptParameters,
     SegmentationParameters,
     QuestionGenerationParameters,
-    JobState,
-    GenAIBody
 )
 from services.audio import AudioService
 from services.transcription import TranscriptionService
 from services.segmentation import SegmentationService
 from services.question_generation import QuestionGenerationService
 from services.storage import GCloudStorageService
-from services.database import db_service
 
 # Get webhook configuration from environment
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")

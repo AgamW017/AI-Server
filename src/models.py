@@ -33,14 +33,6 @@ class QuestionGenerationParameters(BaseModel):
     NAT: Optional[int] = None
     DES: Optional[int] = None
 
-class UploadParameters(BaseModel):
-    courseId: str = Field(...)
-    versionId: str = Field(...)
-    moduleId: str = Field(...)
-    sectionId: str = Field(...)
-    afterItemId: Optional[str] = None
-    beforeItemId: Optional[str] = None
-
 class TaskStatus(str, Enum):
     PENDING = 'PENDING'
     RUNNING = 'RUNNING'
@@ -125,7 +117,6 @@ class GenAI(BaseModel):
     transcriptParameters: Optional[TranscriptParameters] = None
     segmentationParameters: Optional[SegmentationParameters] = None
     questionGenerationParameters: Optional[QuestionGenerationParameters] = None
-    uploadParameters: Optional[UploadParameters] = None
 
 class GenAIBody(GenAI):
     id: Optional[str] = Field(None, alias="_id")
@@ -141,7 +132,6 @@ class TaskData(BaseModel):
     transcriptGeneration: Optional[List[TranscriptGenerationData]] = None
     segmentation: Optional[List[SegmentationData]] = None
     questionGeneration: Optional[List[QuestionGenerationData]] = None
-    uploadContent: Optional[List[Dict[str, Any]]] = None  # ContentUploadData type not defined yet
 
 class GenAIResponse(BaseModel):
     _id: Optional[str] = None
@@ -167,21 +157,8 @@ class WebhookRequest(BaseModel):
     data: Dict[str, Any]
 
 # Endpoint-specific response models
-class JobCreateResponse(BaseModel):
+class JobResponse(BaseModel):
     message: str = "Job created successfully"
-
-class JobUpdateResponse(BaseModel):
-    message: str
-
-class TaskApprovalResponse(BaseModel):
-    message: str
-
-class JobAbortResponse(BaseModel):
-    message: str
-
-class TaskRerunResponse(BaseModel):
-    message: str
-    jobId: str
 
 class JobStatusResponse(BaseModel):
     jobId: str
@@ -191,10 +168,6 @@ class JobStatusResponse(BaseModel):
 class JobErrorResponse(BaseModel):
     error: str
     details: Optional[str] = None
-
-class ErrorResponse(BaseModel):
-    error: str
-    message: str
 
 class TranscriptSegment(BaseModel):
     timestamp: List[float]

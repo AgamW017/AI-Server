@@ -1,9 +1,6 @@
-import os
 import asyncio
 from typing import Optional
-from pydantic import HttpUrl
 import whisper
-from models import TranscriptParameters
 
 class TranscriptionService:
     def __init__(self):
