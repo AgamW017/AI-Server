@@ -23,8 +23,8 @@ class TranscriptParameters(BaseModel):
 
 class SegmentationParameters(BaseModel):
     lambda_param: Optional[float] = Field(None, alias="lambda")
-    epochs: Optional[int] = None
-    model: Optional[str] = None
+    runs_param: Optional[int] = Field(None, alias="runs")
+    noise_id_param: Optional[int] = Field(None, alias="noiseId")
 
 class QuestionGenerationParameters(BaseModel):
     model: Optional[str] = None
@@ -197,8 +197,8 @@ class ErrorResponse(BaseModel):
     message: str
 
 class TranscriptSegment(BaseModel):
-    end_time: str
-    transcript_lines: list[str]
+    timestamp: List[float]
+    text: str
 
 class CleanedSegment(BaseModel):
     end_time: str
@@ -221,3 +221,10 @@ class JobState(BaseModel):
     parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
     file: Optional[str] = None
     
+class Transcript(BaseModel):
+    text: str
+    chunks: List[TranscriptSegment] = []
+
+class SegmentResponse(BaseModel):
+    segments: dict
+    segment_count: int

@@ -123,43 +123,65 @@ Transcript content:
 {transcript_content}
 
 Each question should:
-- Be based on the transcript content
-- Have appropriate difficulty level
+- Focus on conceptual understanding
+- Test comprehension of key ideas, principles, and relationships discussed in the content
+- Avoid quesitons that require memorizing exact numerical values, dates, or statistics mentioned in the content
+- The answer of questions should be present within the content, but not directly quoted
+- make all the options roughly the same length
 - Set isParameterized to false unless the question uses variables
 
 """
 
         type_specific_instructions = {
             "SOL": """Create SELECT_ONE_IN_LOT questions (single correct answer multiple choice):
-- Clear question text
-- 3-4 incorrect options with explanations
-- 1 correct option with explanation
+- Focus on understanding concepts, principles, or cause-and-effect relationships
+- Avoid questions about specific numbers, percentages, or statistical data
+- Clear question text that tests comprehension of ideas
+- 3-4 incorrect options with explanations that address common misconceptions
+- 1 correct option with explanation that reinforces the concept
+- Include a hint that points to the key concept or principle being tested
 - Set timeLimitSeconds to 60 and points to 5""",
 
             "SML": """Create SELECT_MANY_IN_LOT questions (multiple correct answers):
-- Clear question text
+- Test understanding of multiple related concepts or characteristics
+- Focus on identifying key principles, factors, or elements discussed
+- Avoid numerical data or statistical information
+- Clear question text about conceptual relationships
 - 2-3 incorrect options with explanations
-- 2-3 correct options with explanations
+- 2-3 correct options with explanations that reinforce understanding
+- Include a hint that mentions the number of correct answers or key criteria
 - Set timeLimitSeconds to 90 and points to 8""",
 
             "OTL": """Create ORDER_THE_LOTS questions (ordering/sequencing):
-- Clear question text asking to order items
-- 3-5 items that need to be ordered correctly
-- Each item should have text and explanation
+- Focus on logical sequences, processes, or hierarchical relationships
+- Test understanding of how concepts build upon each other
+- Avoid chronological ordering based on specific dates or times
+- Clear question text asking to order concepts, steps, or principles
+- 3-5 items that need to be ordered based on logical flow or importance
+- Each item should represent a concept with explanation of its position
 - Order should be numbered starting from 1
+- Include a hint about the ordering logic or key principle to consider
 - Set timeLimitSeconds to 120 and points to 10""",
 
             "NAT": """Create NUMERIC_ANSWER_TYPE questions (numerical answers):
-- Clear question text requiring a numerical answer
+- Focus on conceptual calculations or estimations rather than exact figures from the content
+- Ask for ratios, proportions, or relative comparisons that require understanding
+- Avoid questions asking for specific numbers mentioned in the content
+- Test ability to apply concepts to derive approximate or relative numerical answers
+- Questions should require reasoning and application rather than recall
 - Appropriate decimal precision (0-3)
-- Realistic upper and lower limits for the answer
-- Either a specific value or expression for the solution
+- Realistic ranges that test conceptual understanding
+- Include a hint about the mathematical relationship or concept to apply
 - Set timeLimitSeconds to 90 and points to 6""",
 
             "DES": """Create DESCRIPTIVE questions (text-based answers):
-- Clear question text requiring explanation or description
-- Detailed solution text that demonstrates the expected answer
-- Questions that test understanding of concepts from the transcript
+- Focus on explaining concepts, analyzing relationships, or evaluating ideas
+- Test deep understanding through explanation and reasoning
+- Avoid questions asking to repeat specific facts or figures
+- Ask for analysis of why concepts work, how they relate, or what they imply
+- Questions that require synthesis and application of multiple ideas
+- Detailed solution text that demonstrates analytical thinking
+- Include a hint that suggests the key aspects or framework to consider
 - Set timeLimitSeconds to 300 and points to 15""",
         }
 
@@ -171,7 +193,7 @@ Each question should:
         """
         Generate questions based on segments and question specifications
         """
-        model = question_params.model if question_params and question_params.model else "gemma3"
+        model = question_params.model if question_params and question_params.model else "deepseek-r1:70b"
         question_specs = {
             "SOL": question_params.SOL if question_params and question_params.SOL else 2,
             "SML": question_params.SML if question_params and question_params.SML else 1,
@@ -200,15 +222,15 @@ Each question should:
                         base_schema = self.question_schemas.get(question_type)
                         format_schema = None
                         if base_schema:
-                            if count == 1:
-                                format_schema = base_schema
-                            else:
-                                format_schema = {
-                                    "type": "array",
-                                    "items": base_schema,
-                                    "minItems": count,
-                                    "maxItems": count,
-                                }
+                          if count == 1:
+                            format_schema = base_schema
+                          else:
+                            format_schema = {
+                                "type": "array",
+                                "items": base_schema,
+                                "minItems": count,
+                                "maxItems": count,
+                            }
 
                         prompt = self.create_question_prompt(question_type, count, segment_transcript)
 
@@ -224,8 +246,7 @@ Each question should:
 
                         response = requests.post(
                             f"{self.ollama_api_base_url}/generate",
-                            json=payload,
-                            timeout=300  # 5 minute timeout
+                            json=payload
                         )
                         response.raise_for_status()
 
@@ -234,35 +255,35 @@ Each question should:
                             cleaned_json_text = self.extract_json_from_markdown(generated_text)
 
                             try:
-                                generated = json.loads(cleaned_json_text)
-                                arr = generated if isinstance(generated, list) else [generated]
+                              generated = json.loads(cleaned_json_text)
+                              arr = generated if isinstance(generated, list) else [generated]
 
-                                for q in arr:
-                                    question = GeneratedQuestion(
-                                        segmentId=segment_id,
-                                        questionType=question_type,
-                                        questionText=q.get('questionText', ''),
-                                        options=[QuestionOption(**opt) for opt in q.get('options', [])] if q.get('options') else None,
-                                        solution=q.get('solution'),
-                                        isParameterized=q.get('isParameterized', False),
-                                        timeLimitSeconds=q.get('timeLimitSeconds'),
-                                        points=q.get('points')
-                                    )
-                                    all_generated_questions.append(question)
+                              for q in arr:
+                                  question = GeneratedQuestion(
+                                    segmentId=segment_id,
+                                    questionType=question_type,
+                                    questionText=q.get('questionText', ''),
+                                    options=[QuestionOption(**opt) for opt in q.get('options', [])] if q.get('options') else None,
+                                    solution=q.get('solution'),
+                                    isParameterized=q.get('isParameterized', False),
+                                    timeLimitSeconds=q.get('timeLimitSeconds'),
+                                    points=q.get('points')
+                                  )
+                                  all_generated_questions.append(question)
 
-                                print(f"Generated {len(arr)} {question_type} questions for segment {segment_id}")
+                              print(f"Generated {len(arr)} {question_type} questions for segment {segment_id}")
 
                             except json.JSONDecodeError as parse_error:
-                                print(f"Error parsing JSON for {question_type} questions in segment {segment_id}: {parse_error}")
-                                print(f"Raw response: {generated_text}")
+                              print(f"Error parsing JSON for {question_type} questions in segment {segment_id}: {parse_error}")
+                              print(f"Raw response: {generated_text}")
 
                         else:
-                            print(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")
+                          print(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")
 
                     except requests.RequestException as error:
-                        print(f"Error calling Ollama API for {question_type} questions in segment {segment_id}: {error}")
+                      print(f"Error calling Ollama API for {question_type} questions in segment {segment_id}: {error}")
 
                     except Exception as error:
-                        print(f"Error generating {question_type} questions for segment {segment_id}: {error}")
+                      print(f"Error generating {question_type} questions for segment {segment_id}: {error}")
 
         return all_generated_questions

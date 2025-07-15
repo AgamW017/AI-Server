@@ -5,65 +5,19 @@ from pydantic import HttpUrl
 import whisper
 from models import TranscriptParameters
 
-# Supported languages for transcription  
-SUPPORTED_LANGUAGES = ['English', 'Hindi']
-
 class TranscriptionService:
     def __init__(self):
         self.model = None
         self.current_model_size = None
     
-    async def _load_model(self, model_size: str = "small"):
+    async def _load_model(self, model_size: str = "medium"):
         """Load the Whisper model lazily"""
         if self.model is None or self.current_model_size != model_size:
             loop = asyncio.get_event_loop()
             self.model = await loop.run_in_executor(None, lambda: whisper.load_model(model_size))
             self.current_model_size = model_size
     
-    def _parse_vtt_to_timestamp_format(self, segments) -> str:
-        """
-        Converts Whisper segments to the desired timestamp format
-        
-        Args:
-            segments: Whisper transcription segments with timestamps
-            
-        Returns:
-            str: Formatted transcript with timestamps
-        """
-        result = []
-        
-        for segment in segments:
-            start_time = segment['start']
-            end_time = segment['end']
-            text = segment['text'].strip()
-            
-            if text:
-                # Convert seconds to MM:SS.mmm format
-                def seconds_to_mmss(seconds):
-                    minutes = int(seconds // 60)
-                    secs = seconds % 60
-                    return f"{minutes:02d}:{secs:06.3f}"
-                
-                start_formatted = seconds_to_mmss(start_time)
-                end_formatted = seconds_to_mmss(end_time)
-                
-                result.append(f"[{start_formatted} --> {end_formatted}]  {text}")
-        
-        return '\n'.join(result)
-    
-    def _is_language_supported(self, language: str) -> bool:
-        """
-        Validates if the provided language is supported
-        
-        Args:
-            language: The language to validate
-            
-        Returns:
-            bool: True if language is supported
-        """
-        return language in SUPPORTED_LANGUAGES
-    
-    async def transcribe(self, audio_path: str, model_size: Optional[str] = 'small',  language: Optional[str] = 'en') -> str:
+    async def transcribe(self, audio_path: str, model_size: Optional[str] = 'medium',  language: Optional[str] = 'en') -> str:
         """
         Transcribes an audio file using Whisper package.
         
@@ -77,15 +31,10 @@ class TranscriptionService:
         Raises:
             Exception: If transcription fails
         """
-        # Validate language support
-        if not self._is_language_supported(language if language else 'en'):
-            raise Exception(
-                f"Unsupported language: {language}. Supported languages: {', '.join(SUPPORTED_LANGUAGES)}"
-            )
         
         try:
             # Load the Whisper model with specified size
-            await self._load_model(model_size if model_size else 'small')
+            await self._load_model(model_size if model_size else 'medium')
             
             print(f"Starting Whisper transcription for: {audio_path} (model: {model_size}, language: {language})")
             
@@ -100,11 +49,21 @@ class TranscriptionService:
             
             result = await loop.run_in_executor(None, run_transcription)
             
-            # Parse segments to desired timestamp format
-            formatted_transcript = self._parse_vtt_to_timestamp_format(result['segments'])
+            formatted_result = {
+                "text": result["text"],  # Full transcript text
+                "chunks": []
+            }
             
-            print('Whisper transcription successful.')
-            return formatted_transcript
+            # Convert segments to chunks format with timestamp arrays
+            for segment in result.get("segments", []):
+                chunk = {
+                    "timestamp": [segment["start"], segment["end"]],
+                    "text": segment["text"]
+                }
+                formatted_result["chunks"].append(chunk)
+            
+            return formatted_result
+
             
         except Exception as error:
             # This catch handles errors from the try block above

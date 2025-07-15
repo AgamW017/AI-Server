@@ -7,5 +7,5 @@ yt-dlp>=2025.6.30
 openai-whisper>=20250625
 google-cloud-storage>=3.2.0
 httpx>=0.28.1
-
+bertopic>=0.17.3
 # sudo apt install ffmpeg

@@ -1,14 +1,14 @@
-import json
-import re
 import os
-from typing import Dict, List, Optional, TYPE_CHECKING
-import requests
+from typing import Dict, List, Optional, TYPE_CHECKING, Sequence
+import numpy as np
 from fastapi import HTTPException
+from bertopic import BERTopic
+from sentence_transformers import SentenceTransformer
 
 if TYPE_CHECKING:
     from models import SegmentationParameters
 
-from models import TranscriptSegment
+from models import SegmentResponse, Transcript, TranscriptSegment
 
 
 class SegmentationService:
@@ -17,192 +17,294 @@ class SegmentationService:
     def __init__(self):
         self.ollama_api_base_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api")
     
-    def extract_json_from_markdown(self, text: str) -> str:
-        """Extract JSON content from markdown-formatted text"""
-        # Remove markdown code blocks
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
-        
-        # Remove any leading/trailing whitespace
-        text = text.strip()
-        
-        # Try to find JSON content between { } or [ ]
-        json_match = re.search(r'[\[\{].*[\]\}]', text, re.DOTALL)
-        if json_match:
-            return json_match.group(0)
-        
-        return text
+    async def run_bertopic(self, topic_model: BERTopic, sentences: List[str], embeddings: any) -> any:
+        topics, _ = topic_model.fit_transform(sentences, embeddings)
+        return topics
+    
+    """
+    dynaseg.py
+    ==========
 
-    def clean_transcript_lines(self, transcript_lines: List[str]) -> str:
-        """Clean transcript lines by removing timestamps and combining text"""
-        cleaned_text = []
-        
-        for line in transcript_lines:
-            # Remove timestamp patterns like "00:00.000 --> 01:30.000"
-            cleaned_line = re.sub(r'\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}', '', line)
-            # Remove timestamp patterns like "[00:00.000 --> 01:30.000]"
-            cleaned_line = re.sub(r'\[\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}\]', '', cleaned_line)
-            
-            # Clean up extra whitespace
-            cleaned_line = cleaned_line.strip()
-            
-            if cleaned_line:
-                cleaned_text.append(cleaned_line)
-        
-        return ' '.join(cleaned_text)
+    Dynamic-programming text segmentation for BERTopic-style sentence labels.
+    -------------------------------------------------------------------------
 
-    async def segment_transcript(self, transcript: str, segmentation_params: Optional['SegmentationParameters'] = None) -> Dict[str, str]:
+    Given a list of *topic IDs* (one per sentence), compute a **boundary
+    vector** that marks the first sentence of every "clean" topic segment.
+
+    Key idea
+    --------
+    We minimise a global objective:
+
+        total_cost =  Σ  ( disagreement_cost(segment) + λ )
+
+    where λ ("lambda") is the price of *starting* a new segment.
+    The disagreement cost of a segment [i, j) is
+
+        (#sentences in the span) − (count of most frequent topic in the span)
+consensus_boundaries
+    → zero if the whole span is the same topic,
+      positive if topics are mixed.
+
+    The optimal segmentation can be found in O(n²) time with a classic
+    dynamic programme (Utiyama & Isahara, 2001).  Here, n = #sentences,
+    so runtime is negligible for typical documents.
+
+    Public API
+    ----------
+    dp_segment(labels, lam=1.0, noise_id=-1) -> List[int]
+
+    * labels   : List[int]  raw topic indices from BERTopic
+    * lam      : float      cut penalty (higher = longer segments)
+    * noise_id : int        label used for "noise"/outlier sentences
+    * returns  : List[int]  boundary vector, 1 means "segment starts here"
+    """
+
+    # ---------------------------------------------------------------------
+    # --------------  0.  tiny clean-up to remove -1 noise labels  ---------
+    # ---------------------------------------------------------------------
+    async def fix_noise(self, labels: Sequence[int], noise_id: int = -1) -> List[int]:
+        """consensus_boundaries
+        Replace every occurrence of *noise_id* with the most recent
+        *non-noise* topic so that the DP does not have to deal with '-1'.
+        """
+        fixed: List[int] = []
+        prev_valid = None
+        for z in labels:
+            if z == noise_id:
+                # if we have seen a real topic before, reuse it; otherwise 0
+                fixed.append(prev_valid if prev_valid is not None else 0)
+            else:
+                fixed.append(z)
+                prev_valid = z
+        return fixed
+
+
+    # ---------------------------------------------------------------------
+    # --------------  1.  build prefix topic counts (O(n·|T|)) -------------
+    # ---------------------------------------------------------------------
+    async def prefix_counts(self, labels: Sequence[int]) -> Dict[int, List[int]]:
+        """
+        freq[t][j] =   how many times topic *t* occurs in sentences 0…j-1
+        Shape:  { topic_id → (n+1)-long list }.
+        """
+        n = len(labels)
+        topics = set(labels)
+        freq: Dict[int, List[int]] = {t: [0] * (n + 1) for t in topics}
+
+        for j, z in enumerate(labels, start=1):        # 1-based prefix index
+            for t in topics:
+                freq[t][j] = freq[t][j - 1] + (1 if z == t else 0)
+
+        return freq
+
+
+    # ---------------------------------------------------------------------
+    # --------------  2.  dynamic-programming segmentation  ----------------
+    # ---------------------------------------------------------------------
+    async def dp_segment(self, labels: List[int], lam: float = 1.0, noise_id: int = -1) -> List[int]:
+        """
+        Perform DP segmentation and return a *boundary vector* of the
+        same length as `labels`.  Entry i == 1  ⇒  sentence i starts a segment.
+        """
+        # -- Step 0  (optional) noise clean-up ---------------------------------
+        clean = await self.fix_noise(self, labels, noise_id=noise_id)
+
+        n = len(clean)
+        if n == 0:
+            return []
+
+        # -- Step 1  prefix frequency table ------------------------------------
+        freq = await self.prefix_counts(self, clean)
+        topics = list(freq.keys())                    # stable order
+
+        # helper: O(|topics|) cost of treating [i, j) as one block
+        def span_cost(i: int, j: int) -> int:
+            span_len = j - i
+            max_same_topic = max(freq[t][j] - freq[t][i] for t in topics)
+            return span_len - max_same_topic          # disagreement count
+
+        # -- Step 2  dynamic programme -----------------------------------------
+        dp = [float("inf")] * (n + 1)                 # best cost for prefix 0…j
+        back = [0] * (n + 1)                          # best predecessor index
+        dp[0] = -lam                                  # so first segment pays +λ once
+
+        for j in range(1, n + 1):                     # end position (exclusive)
+            for i in range(j):                        # candidate previous cut
+                cost = dp[i] + span_cost(i, j) + lam  # block cost + λ
+                if cost < dp[j]:
+                    dp[j] = cost
+                    back[j] = i
+
+        # -- Step 3  back-trace to create boundary vector ----------------------
+        boundaries = [0] * n
+        k = n
+        while k > 0:
+            i = back[k]
+            boundaries[i] = 1                         # sentence i starts segment
+            k = i                                     # jump to previous cut
+        return boundaries
+
+    async def consensus_boundaries(self, boundary_runs, min_sep=3, method="topk"):
+        """
+        Fuse N binary boundary vectors into one consensus vector.
+
+        Parameters
+        ----------
+        boundary_runs : List[np.ndarray]  each shape (n,), entries 0/1
+        min_sep       : int  hard minimum gap between consecutive cuts
+        method        : "topk" | "threshold" | "localmax"
+            topk       – take K = median #cuts and pick top-K probs
+            threshold  – pick all positions with p ≥ 0.5
+            localmax   – pick local maxima separated by ≥ min_sep
+
+        Returns
+        -------
+        consensus : np.ndarray shape (n,), entries 0/1
+        p         : np.ndarray shape (n,) probability profile
+        """
+        B = np.stack(boundary_runs)           # (N, n)
+        p = B.mean(axis=0)                    # boundary probability at each index
+        n = p.size
+        consensus = np.zeros(n, dtype=int)
+
+        if method == "topk":
+            K = int(np.median(B.sum(axis=1)))        # median #cuts
+            # indices sorted by probability, highest first
+            idx = np.argsort(-p)
+            chosen = []
+            for j in idx:
+                if all(abs(j - c) >= min_sep for c in chosen):
+                    chosen.append(j)
+                if len(chosen) == K:
+                    break
+            consensus[chosen] = 1
+
+        elif method == "threshold":
+            consensus[p >= 0.5] = 1
+
+        elif method == "localmax":
+            for j in range(1, n - 1):
+                if p[j] > p[j - 1] and p[j] >= p[j + 1] and p[j] >= 0.2:
+                    # enforce min_sep
+                    if consensus[max(0, j - min_sep):j].sum() == 0:
+                        consensus[j] = 1
+        else:
+            raise ValueError("unknown method")
+
+        consensus[0] = 1                      # first sentence always a boundary
+        return consensus, p
+    
+    # Add intermediate segments to reduce large gaps
+    async def add_intermediate_segments(segment_indices, chunks, max_gap_seconds=300):
+        """Add intermediate segments if gaps are too large (>5 minutes)"""
+        new_indices = list(segment_indices)
+        
+        for i in range(len(segment_indices) - 1):
+            start_idx = segment_indices[i]
+            end_idx = segment_indices[i + 1]
+            
+            # Get time range for this gap
+            start_time = chunks[start_idx]['timestamp'][1] if start_idx < len(chunks) else 0
+            end_time = chunks[end_idx]['timestamp'][0] if end_idx < len(chunks) else start_time
+            gap_duration = end_time - start_time
+            
+            # If gap is too large, add intermediate segments
+            if gap_duration > max_gap_seconds:
+                num_splits = int(gap_duration / max_gap_seconds)
+                chunk_gap = end_idx - start_idx
+                
+                for split_num in range(1, num_splits + 1):
+                    # Calculate intermediate index proportionally
+                    intermediate_idx = start_idx + int((chunk_gap * split_num) / (num_splits + 1))
+                    
+                    # Make sure it's not too close to existing boundaries
+                    if (intermediate_idx not in new_indices and 
+                        intermediate_idx > start_idx + 3 and 
+                        intermediate_idx < end_idx - 3):
+                        new_indices.append(intermediate_idx)
+        
+        return np.sort(np.array(new_indices))
+
+    async def segment_transcript(self, transcript: Transcript, segmentation_params: Optional['SegmentationParameters'] = None) -> SegmentResponse:
         """
         Segment transcript into meaningful subtopics using LLM
         Returns: Dictionary with end_time as key and cleaned transcript as value
         """
         # Extract model from parameters or use default
-        model = "gemma3"
-        if segmentation_params and hasattr(segmentation_params, 'model') and segmentation_params.model:
-            model = segmentation_params.model
-        
-        if not transcript or not isinstance(transcript, str) or not transcript.strip():
+        lambda_param = 3.5
+        runs_param = 25
+        noise_id_param = -1
+
+        if segmentation_params and segmentation_params.lambda_param:
+            lambda_param = segmentation_params.lambda_param
+        if segmentation_params and segmentation_params.runs_param:
+            runs_param = segmentation_params.runs_param
+        if segmentation_params and segmentation_params.noise_id_param:
+            noise_id_param = segmentation_params.noise_id_param
+
+        if not transcript:
             raise HTTPException(
                 status_code=400,
                 detail="Transcript text is required and must be a non-empty string."
             )
 
-        prompt = f"""Analyze the following timed lecture transcript. Your task is to segment it into meaningful subtopics (not too many, maximum 5 segments).
-The transcript is formatted with each line as: [start_time --> end_time] text OR start_time --> end_time text.
+        chunks = transcript.chunks
 
-For each identified subtopic, you must provide:
-1. "end_time": The end timestamp of the *last transcript line* that belongs to this subtopic (e.g., "02:53.000").
-2. "transcript_lines": An array of strings, where each string is an *original transcript line (including its timestamps and text)* that belongs to this subtopic.
+        transcript_sentences = []
+        for chunk in chunks:
+            transcript_sentences.append(chunk.text)
 
-IMPORTANT: Your response must be ONLY a valid JSON array. Do not include any explanatory text, markdown formatting, or comments.
+        #Generate Embedding of transcript sentences and find topics
+        sentences = transcript_sentences
+        embedder = SentenceTransformer("all-mpnet-base-v2")
+        embeddings = embedder.encode(sentences)
+        topic_model = BERTopic(min_topic_size=2)
 
-Example format:
-[
-  {{
-    "end_time": "01:30.000",
-    "transcript_lines": ["00:00.000 --> 00:30.000 First topic content", "00:30.000 --> 01:30.000 More content"]
-  }},
-  {{
-    "end_time": "03:00.000", 
-    "transcript_lines": ["01:30.000 --> 02:15.000 Second topic content", "02:15.000 --> 03:00.000 Final content"]
-  }}
-]
+        # Run BERTopic multiple times for consensus
+        boundary_runs = []
 
-Transcript to process:
-{transcript}
-
-JSON:"""
-
-        segments = []
-        generated_text = ""
-        try:
-            response = requests.post(
-                f"{self.ollama_api_base_url}/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.1,
-                        "top_p": 0.9,
-                    }
-                },
-                timeout=300  # 5 minute timeout
-            )
-            response.raise_for_status()
-
-            if response.json() and isinstance(response.json().get('response'), str):
-                generated_text = response.json()['response']
-
-                # Enhanced JSON extraction with multiple fallback strategies
-                try:
-                    cleaned_json_text = self.extract_json_from_markdown(generated_text)
-                except Exception as extract_error:
-                    cleaned_json_text = generated_text.strip()
-
-                # Multiple robust JSON parsing strategies
-                json_to_parse = ""
-                
-                # Strategy 1: Look for JSON array in the response
-                array_match = re.search(r'\[[\s\S]*?\]', cleaned_json_text)
-                if array_match:
-                    json_to_parse = array_match.group(0)
-                else:
-                    # Strategy 2: Try to find JSON object and wrap in array
-                    object_match = re.search(r'\{[\s\S]*?\}', cleaned_json_text)
-                    if object_match:
-                        json_to_parse = f"[{object_match.group(0)}]"
-                    else:
-                        # Strategy 3: Remove all non-JSON content before and after
-                        lines = cleaned_json_text.split('\n')
-                        start_idx = -1
-                        end_idx = -1
-                        
-                        for i, line in enumerate(lines):
-                            line = line.strip()
-                            if line.startswith('[') or line.startswith('{'):
-                                start_idx = i
-                                break
-                        
-                        for i in range(len(lines) - 1, -1, -1):
-                            line = lines[i].strip()
-                            if line.endswith(']') or line.endswith('}'):
-                                end_idx = i
-                                break
-                        
-                        if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
-                            json_to_parse = '\n'.join(lines[start_idx:end_idx + 1])
-                        else:
-                            json_to_parse = cleaned_json_text
-
-                # Clean up common JSON formatting issues
-                fixed_json = json_to_parse
-                fixed_json = re.sub(r',\s*}]', '}]', fixed_json)  # Remove trailing commas before closing
-                fixed_json = re.sub(r',\s*]', ']', fixed_json)    # Remove trailing commas in arrays
-                fixed_json = re.sub(r'}\s*{', '},{', fixed_json)   # Add missing commas between objects
-                fixed_json = re.sub(r']\s*\[', '],[', fixed_json)  # Add missing commas between arrays
-                fixed_json = fixed_json.replace('\n', ' ').replace('\t', ' ')  # Replace newlines/tabs with spaces
-                fixed_json = re.sub(r'\s+', ' ', fixed_json).strip()  # Normalize spaces
-
-                segments_data = json.loads(fixed_json)
-
-                # Validate the parsed segments
-                if not isinstance(segments_data, list):
-                    raise ValueError("Response is not an array")
-
-                if len(segments_data) == 0:
-                    raise ValueError("Segments array is empty")
-
-                # Convert to TranscriptSegment objects and validate
-                for i, segment_data in enumerate(segments_data):
-                    if not segment_data.get('end_time') or not isinstance(segment_data.get('transcript_lines'), list):
-                        raise ValueError(f"Invalid segment structure at index {i}")
-                    
-                    segments.append(TranscriptSegment(
-                        end_time=segment_data['end_time'],
-                        transcript_lines=segment_data['transcript_lines']
-                    ))
-
-        except requests.RequestException as error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Ollama API error: {str(error)}"
-            )
-
-        except Exception as error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error segmenting transcript: {str(error)}"
-            )
-
-        # Convert to the required format: {"end_time": "cleaned_transcript"}
-        segments_for_generation = {}
-        for segment in segments:
-            try:
-                cleaned_transcript = self.clean_transcript_lines(segment.transcript_lines)
-                if cleaned_transcript and cleaned_transcript.strip():
-                    segments_for_generation[segment.end_time] = cleaned_transcript
-            except Exception as clean_error:
-                print(f"Error cleaning transcript lines for segment {segment.end_time}: {clean_error}")
-
-        return segments_for_generation
+        for _ in range(runs_param):
+            topics = await self.run_bertopic(topic_model, sentences, embeddings)
+            boundaries = await self.dp_segment(topics, lam=lambda_param, noise_id=-noise_id_param)
+            boundary_runs.append(np.array(boundaries))
+        
+        # Get consensus boundaries
+        consensus, _ = await self.consensus_boundaries(boundary_runs, min_sep=3, method="topk")
+        
+        # Get relevant chunk indices where segments start
+        segment_start_indices = np.where(consensus)[0]
+        # Apply intermediate segment addition
+        segment_start_indices = await self.add_intermediate_segments(self, chunks, max_gap_seconds=350)
+        
+        # Create segments dictionary
+        segments = {}
+        
+        for i, start_idx in enumerate(segment_start_indices):
+            # Determine end index for this segment
+            if i < len(segment_start_indices) - 1:
+                end_idx = segment_start_indices[i + 1]
+            else:
+                end_idx = len(chunks)
+            
+            # Collect all text in this segment
+            segment_text = ""
+            segment_chunks = chunks[start_idx:end_idx]
+            
+            for chunk in segment_chunks:
+                segment_text += chunk['text'] + " "
+            
+            # Use the endtime of the last chunk in the segment as the key
+            last_chunk = chunks[end_idx - 1]
+            # Handle the timestamp format: [start_time, end_time]
+            if 'timestamp' in last_chunk:
+                endtime = last_chunk['timestamp'][1]  # Get end_time from timestamp array
+            else:
+                # Fallback for other formats
+                endtime = last_chunk.get('endtime', last_chunk.get('end_time', str(end_idx)))
+            
+            # Clean up the segment text
+            segment_text = segment_text.strip()
+            
+            segments[str(endtime)] = segment_text
+        
+        return SegmentResponse(segments=segments, segment_count=len(segment_start_indices))
