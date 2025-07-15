@@ -1,9 +1,8 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import uvicorn
-import os
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -64,7 +63,7 @@ async def root():
         "webhook_info": {
             "description": "AI Server sends webhooks to main server after each task completion",
             "main_server_endpoint": "Main server's /genAI/webhook endpoint",
-            "authentication": "x-webhook-signature header"
+            "authentication": "X-Webhook-Secret header"
         }
     }
 
