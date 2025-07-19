@@ -8,4 +8,11 @@ openai-whisper>=20250625
 google-cloud-storage>=3.2.0
 httpx>=0.28.1
 bertopic>=0.17.3
+numpy==2.2
+langchain
+pymongo
+langchain-mongodb
+langchain-ollama
+langchain-community
+
 # sudo apt install ffmpeg

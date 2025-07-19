@@ -18,6 +18,8 @@ from services.transcription import TranscriptionService
 from services.segmentation import SegmentationService
 from services.question_generation import QuestionGenerationService
 from services.storage import GCloudStorageService
+from services.vector_store import VectorStoreService
+
 
 # Get webhook configuration from environment
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -31,6 +33,8 @@ if not WEBHOOK_SECRET:
 # Now we can safely use these as strings
 webhook_url: str = WEBHOOK_URL
 webhook_secret: str = WEBHOOK_SECRET
+
+
 
 # Note: Removed the old JobState class and process_video_async function
 # as they used in-memory job_states which is now replaced with MongoDB persistence
@@ -362,6 +366,62 @@ async def start_question_generation_task(job_id: str, file: str, approval_data: 
         
         await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", error_data)
         raise
+
+async def start_pdf_chunking_task(job_id: str, file: str) -> Dict[str, Any]:
+    """Start PDF chunking and embeddings storage task in MongoDB Atlas Vector Storage"""
+    print(f"start_pdf_chunking_task called for job {job_id}")
+
+    if not file:
+        error_msg = f"No PDF file found for job {job_id}"
+        print(error_msg)
+        raise ValueError(error_msg)
+
+    # Use webhook URL from environment
+    current_webhook_url = webhook_url
+    if not current_webhook_url.startswith("http://") and not current_webhook_url.startswith("https://"):
+        current_webhook_url = "http://" + current_webhook_url
+
+    vector_store_service = VectorStoreService()
+    
+    try:
+        # Send webhook - Starting PDF chunking
+        pdf_chunking_data = {
+            "status": TaskStatus.RUNNING,
+            "fileName": file
+        }
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "PDF_CHUNKING", pdf_chunking_data)
+        
+        # Chunk the PDF file
+        print("Chunking PDF file...")
+        from services.pdf_chunking import PDFChunkingService 
+        pdf_chunker = PDFChunkingService()
+        chunks = await pdf_chunker.chunk_pdf(file)
+        
+
+        # Send webhook - PDF chunking completed
+        pdf_chunking_data = {
+            "status": TaskStatus.RUNNING,
+            "data": chunks
+        }
+
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "PDF_CHUNKING_DONE", pdf_chunking_data)
+
+        res = await vector_store_service.upload_chunks_embeddings(file, chunks)
+
+        pdf_chunking_data = {
+            "status": TaskStatus.COMPLETED,
+        }
+        
+        # Note: Job status updates are handled by the external system, not this read-only service
+        await send_webhook(current_webhook_url, job_id, webhook_secret, "CHUNKS_EMBEDDINGS_PUSHED_TO_MONGODB_VECTOR_STORE", pdf_chunking_data)
+        
+        return {
+            "status": "COMPLETED",
+            "next_task": None,
+        }
+    except Exception as e:
+        print("Error in embeddings generations: ", str(e))
+
 
 async def send_webhook(webhook_url: str, job_id: str, webhook_secret: str, task: str, data):
     """Send webhook notification"""

@@ -201,3 +201,9 @@ class Transcript(BaseModel):
 class SegmentResponse(BaseModel):
     segments: dict
     segment_count: int
+
+class PDFUploadResponse(BaseModel):
+    message: str
+    filename: str
+    chunks_processed: int
+    document_id: str
