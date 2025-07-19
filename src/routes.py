@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from typing import Optional
 import asyncio
 import threading
@@ -15,8 +15,6 @@ from models import (
     TranscriptParameters,
     QuestionGenerationParameters
 )
-from auth import verify_webhook_secret
-
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 def run_async_task_in_thread(async_func, *args, **kwargs):
@@ -51,7 +49,6 @@ def run_async_task(async_func, *args, **kwargs):
 async def approve_task_start(
     jobId: str,
     background_tasks: BackgroundTasks,
-    _: str = Depends(verify_webhook_secret),
     taskData: Optional[JobState] = None,
 ):
     print(f"Raw request received for job {jobId}")
@@ -110,7 +107,6 @@ async def rerun_task(
     jobId: str,
     background_tasks: BackgroundTasks,
     taskData: JobState,
-    _: str = Depends(verify_webhook_secret)
 ):
     """Rerun the current task"""
     current_task = taskData.currentTask
