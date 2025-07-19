@@ -57,6 +57,12 @@ class VectorStoreService:
         self.vector_store = vector_store
     
     async def upload_chunks_embeddings(self, file, chunks):
+        """
+        Uploads chunks of text to the vector store with metadata.
+        :param file: The uploaded file object containing the PDF.
+        :param chunks: List of text chunks extracted from the PDF.
+        :return: Response indicating success or failure.
+        """
         vector_store = self.vector_store
         try:
             # Add metadata to chunks
@@ -88,6 +94,28 @@ class VectorStoreService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error uploading chunks: {str(e)}"
+            )
+        
+    async def get_contextual_content(self, transcript_content: str, top_k: int = 3):
+        """
+        Retrieves contextual content based on the provided transcript.
+        :param transcript_content: The content of the transcript to search against.
+        :param top_k: Number of top results to return.
+        :return: List of documents matching the query.
+        """
+        try:
+            retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+            relevant_docs = retriever.get_relevant_documents(transcript_content)
+            if(len(relevant_docs) == 0):
+                return None
+            contextual_content = "\n".join([doc.page_content for doc in relevant_docs])
+            return contextual_content
+        
+        except Exception as e:
+            logger.error(f"Error retrieving contextual content: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error retrieving contextual content: {str(e)}"
             )
 
         

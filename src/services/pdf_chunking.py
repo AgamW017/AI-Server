@@ -24,15 +24,13 @@ class PDFChunkingService:
     def __init__(self, text_splitter=text_splitter):
         self.text_splitter = text_splitter
 
-    async def chunk_pdf(self, file_path):
+    async def chunk_pdf(self, file):
         """
         Chunk a PDF file into smaller pieces of text.
         
-        :param file_path: Path to the PDF file.
-        :param chunk_size: Number of characters per chunk.
+        :param file: Path to the PDF file.
         :return: List of text chunks.
         """
-        file = file_path
         try:
         # Create temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
