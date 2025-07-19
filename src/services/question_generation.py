@@ -4,13 +4,15 @@ import os
 from typing import Dict, List, Optional, TYPE_CHECKING
 import requests
 from fastapi import HTTPException
+from services.vector_store import VectorStoreService
 from schema import SOL_SCHEMA, SML_SCHEMA, OTL_SCHEMA, NAT_SCHEMA, DES_SCHEMA
+
 
 if TYPE_CHECKING:
     from models import QuestionGenerationParameters
 
 class QuestionGenerationService:
-    """Service for generating questions from transcript segments"""
+    """Service for generating questions from transcript segments and retrieved context(optional)."""
     
     def __init__(self):
         self.ollama_api_base_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api")
@@ -40,7 +42,7 @@ class QuestionGenerationService:
         
         return text
 
-    def create_question_prompt(self, question_type: str, count: int, transcript_content: str) -> str:
+    def create_question_prompt(self, question_type: str, count: int, transcript_content: str, use_context: bool = False) -> str:
         """Create a prompt for question generation based on type and content"""
         base_prompt = f"""Based on the following transcript content, generate {count} educational question(s) of type {question_type}.
 
@@ -56,6 +58,27 @@ Each question should:
 - Set isParameterized to false unless the question uses variables
 
 """
+        if use_context:
+            vector_store_service = VectorStoreService()
+            contextual_content = vector_store_service.get_contextual_content(transcript_content)
+            if not contextual_content:
+               contextual_content = "No relevant contextual content found."
+            base_prompt_use_context = f"""Based on the following transcript content and the contextual content, generate {count} educational question(s) of type {question_type}.
+
+    Transcript content:
+    {transcript_content}
+
+    Contextual content:
+    {contextual_content}
+
+    Each question should:
+    - Focus on conceptual understanding
+    - Test comprehension of key ideas, principles, and relationships discussed in the content
+    - Avoid quesitons that require memorizing exact numerical values, dates, or statistics mentioned in the content
+    - The answer of questions should be present within the content, but not directly quoted
+    - make all the options roughly the same length
+    - Set isParameterized to false unless the question uses variables
+    """
 
         type_specific_instructions = {
             "SOL": """Create SELECT_ONE_IN_LOT questions (single correct answer multiple choice):
@@ -110,11 +133,17 @@ Each question should:
 - Set timeLimitSeconds to 300 and points to 15""",
         }
 
+        if use_context:
+            return base_prompt_use_context + type_specific_instructions.get(
+                question_type, f"Generate question of type {question_type}."
+            )
+        
         return base_prompt + type_specific_instructions.get(
             question_type, f"Generate question of type {question_type}."
         )
 
-    async def generate_questions(self, segments: Dict[str, str], question_params: Optional['QuestionGenerationParameters'] = None) -> List[str]:
+
+    async def generate_questions(self, segments: Dict[str, str], question_params: Optional['QuestionGenerationParameters'] = None, use_context: bool = False) -> List[GeneratedQuestion]:
         """
         Generate questions based on segments and question specifications
         """
