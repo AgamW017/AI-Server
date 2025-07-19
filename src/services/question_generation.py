@@ -5,12 +5,11 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 import requests
 from fastapi import HTTPException
 from services.vector_store import VectorStoreService
+from schema import SOL_SCHEMA, SML_SCHEMA, OTL_SCHEMA, NAT_SCHEMA, DES_SCHEMA
+
 
 if TYPE_CHECKING:
     from models import QuestionGenerationParameters
-
-from models import GeneratedQuestion, QuestionOption
-
 
 class QuestionGenerationService:
     """Service for generating questions from transcript segments and retrieved context(optional)."""
@@ -20,84 +19,11 @@ class QuestionGenerationService:
         
         # Question schemas for different types
         self.question_schemas = {
-            "SOL": {
-                "type": "object",
-                "properties": {
-                    "questionText": {"type": "string"},
-                    "options": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string"},
-                                "correct": {"type": "boolean"},
-                                "explanation": {"type": "string"}
-                            }
-                        }
-                    },
-                    "timeLimitSeconds": {"type": "number"},
-                    "points": {"type": "number"}
-                }
-            },
-            "SML": {
-                "type": "object",
-                "properties": {
-                    "questionText": {"type": "string"},
-                    "options": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string"},
-                                "correct": {"type": "boolean"},
-                                "explanation": {"type": "string"}
-                            }
-                        }
-                    },
-                    "timeLimitSeconds": {"type": "number"},
-                    "points": {"type": "number"}
-                }
-            },
-            "OTL": {
-                "type": "object",
-                "properties": {
-                    "questionText": {"type": "string"},
-                    "options": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "text": {"type": "string"},
-                                "order": {"type": "number"},
-                                "explanation": {"type": "string"}
-                            }
-                        }
-                    },
-                    "timeLimitSeconds": {"type": "number"},
-                    "points": {"type": "number"}
-                }
-            },
-            "NAT": {
-                "type": "object",
-                "properties": {
-                    "questionText": {"type": "string"},
-                    "solution": {"type": "number"},
-                    "precision": {"type": "number"},
-                    "upperLimit": {"type": "number"},
-                    "lowerLimit": {"type": "number"},
-                    "timeLimitSeconds": {"type": "number"},
-                    "points": {"type": "number"}
-                }
-            },
-            "DES": {
-                "type": "object",
-                "properties": {
-                    "questionText": {"type": "string"},
-                    "solution": {"type": "string"},
-                    "timeLimitSeconds": {"type": "number"},
-                    "points": {"type": "number"}
-                }
-            }
+            "SOL": SOL_SCHEMA,
+            "SML": SML_SCHEMA,
+            "OTL": OTL_SCHEMA,
+            "NAT": NAT_SCHEMA,
+            "DES": DES_SCHEMA
         }
 
     def extract_json_from_markdown(self, text: str) -> str:
@@ -216,6 +142,7 @@ Each question should:
             question_type, f"Generate question of type {question_type}."
         )
 
+
     async def generate_questions(self, segments: Dict[str, str], question_params: Optional['QuestionGenerationParameters'] = None, use_context: bool = False) -> List[GeneratedQuestion]:
         """
         Generate questions based on segments and question specifications
@@ -223,9 +150,9 @@ Each question should:
         model = question_params.model if question_params and question_params.model else "deepseek-r1:70b"
         question_specs = {
             "SOL": question_params.SOL if question_params and question_params.SOL else 2,
-            "SML": question_params.SML if question_params and question_params.SML else 1,
-            "NAT": question_params.NAT if question_params and question_params.NAT else 1,
-            "DES": question_params.DES if question_params and question_params.DES else 1,
+            "SML": question_params.SML if question_params and question_params.SML else 2,
+            "NAT": question_params.NAT if question_params and question_params.NAT else 0,
+            "DES": question_params.DES if question_params and question_params.DES else 0,
         }
         
         if not segments or not isinstance(segments, dict) or not segments:
@@ -280,30 +207,8 @@ Each question should:
                         if response.json() and isinstance(response.json().get('response'), str):
                             generated_text = response.json()['response']
                             cleaned_json_text = self.extract_json_from_markdown(generated_text)
-
-                            try:
-                              generated = json.loads(cleaned_json_text)
-                              arr = generated if isinstance(generated, list) else [generated]
-
-                              for q in arr:
-                                  question = GeneratedQuestion(
-                                    segmentId=segment_id,
-                                    questionType=question_type,
-                                    questionText=q.get('questionText', ''),
-                                    options=[QuestionOption(**opt) for opt in q.get('options', [])] if q.get('options') else None,
-                                    solution=q.get('solution'),
-                                    isParameterized=q.get('isParameterized', False),
-                                    timeLimitSeconds=q.get('timeLimitSeconds'),
-                                    points=q.get('points')
-                                  )
-                                  all_generated_questions.append(question)
-
-                              print(f"Generated {len(arr)} {question_type} questions for segment {segment_id}")
-
-                            except json.JSONDecodeError as parse_error:
-                              print(f"Error parsing JSON for {question_type} questions in segment {segment_id}: {parse_error}")
-                              print(f"Raw response: {generated_text}")
-
+                            all_generated_questions.append(cleaned_json_text)
+                            
                         else:
                           print(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")
 

@@ -14,5 +14,6 @@ pymongo
 langchain-mongodb
 langchain-ollama
 langchain-community
+tbb>=2022.2.0
 
 # sudo apt install ffmpeg

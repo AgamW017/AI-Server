@@ -22,9 +22,9 @@ class TranscriptParameters(BaseModel):
     modelSize: Optional[str] = None
 
 class SegmentationParameters(BaseModel):
-    lambda_param: Optional[float] = Field(None, alias="lambda")
-    runs_param: Optional[int] = Field(None, alias="runs")
-    noise_id_param: Optional[int] = Field(None, alias="noiseId")
+    lam: Optional[float] = None
+    runs: Optional[int] = None
+    noiseId: Optional[int] = None
 
 class QuestionGenerationParameters(BaseModel):
     model: Optional[str] = None
@@ -52,16 +52,6 @@ class QuestionOption(BaseModel):
     text: str
     correct: Optional[bool] = None
     explanation: Optional[str] = None
-    
-class GeneratedQuestion(BaseModel):
-    segmentId: Optional[str] = None
-    questionType: Optional[str] = None
-    questionText: str
-    options: Optional[list[QuestionOption]] = None
-    solution: Optional[Any] = None
-    isParameterized: Optional[bool] = False
-    timeLimitSeconds: Optional[int] = None
-    points: Optional[int] = None
 
 class AudioData(BaseModel):
     status: TaskStatus
@@ -89,8 +79,7 @@ class TranscriptGenerationData(BaseModel):
 class SegmentationData(BaseModel):
     status: TaskStatus
     error: Optional[str] = None
-    fileName: Optional[str] = None
-    fileUrl: Optional[str] = None
+    segmentationMap: Optional[Dict[str, str]] = None
     parameters: Optional[SegmentationParameters] = None
     
     def dict(self, **kwargs):
@@ -103,6 +92,7 @@ class QuestionGenerationData(BaseModel):
     error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
+    segmentMapUsed: Optional[Dict[str, str]] = None
     parameters: Optional[QuestionGenerationParameters] = None
     
     def dict(self, **kwargs):
@@ -191,8 +181,9 @@ class JobState(BaseModel):
     currentTask: TaskType | None = None
     taskStatus: TaskStatus
     url: Optional[str] = None
-    parameters: Optional[TranscriptParameters | SegmentationParameters | QuestionGenerationParameters] = None
+    parameters: Optional[Dict[str, Any]] = None
     file: Optional[str] = None
+    segmentMap: Optional[Dict[str, str]] = None
     
 class Transcript(BaseModel):
     text: str
