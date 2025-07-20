@@ -119,9 +119,7 @@ async def start_transcript_generation_task(job_id: str, file: str, approval_data
         # Generate transcript from audio
         print("Generating transcript from audio...")
         transcript = await transcription_service.transcribe(file, approval_data.modelSize, approval_data.language)
-        
-        # Note: Job status updates are handled by the external system, not this read-only service
-        
+        del transcript["text"]
         # Upload transcript to Google Cloud Storage
         run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
         transcript_file_name = f"transcripts/{job_id}_{run_id}_transcript.json"
@@ -200,16 +198,16 @@ async def start_segmentation_task(job_id: str, file: str, approval_data: Optiona
         print("Segmenting transcript...")
         segmentation_service = SegmentationService()
         segments = await segmentation_service.segment_transcript(transcript, approval_data)
-        
         # Send webhook - Segmentation completed
         segmentation_data = SegmentationData(
             status=TaskStatus.COMPLETED,
             segmentationMap=segments.segments,
+            transcriptFileUrl=file,
             parameters=approval_data
         )
         
         # Note: Job status updates are handled by the external system, not this read-only service
-        
+        print(segmentation_data)
         await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", segmentation_data)
         
         return {
@@ -227,15 +225,35 @@ async def start_segmentation_task(job_id: str, file: str, approval_data: Optiona
         
         await send_webhook(current_webhook_url, job_id, webhook_secret, "SEGMENTATION", error_data)
         raise
+    
+def map_transcript_to_segments(chunks, segmentmap):
+    """
+    Map transcript chunks to segments using segmentmap (array of end times in seconds).
+    Returns a dict: {endtime: concatenated_text}
+    """
+    segment_dict = {}
+    prev_end = 0.0
 
-async def start_question_generation_task(job_id: str, segmentMap, approval_data: Optional[QuestionGenerationParameters] = None) -> Dict[str, Any]:
+    for end_time in segmentmap:
+        segment_text = ""
+        for chunk in chunks:
+            chunk_end = chunk["timestamp"][1]
+            # Include chunk if it ends after prev_end and at or before end_time
+            if chunk_end > prev_end and chunk_end <= end_time:
+                segment_text += chunk["text"] + " "
+        segment_dict[end_time] = segment_text.strip()
+        prev_end = end_time
+
+    return segment_dict
+
+async def start_question_generation_task(job_id: str, segmentMap, file, approval_data: Optional[QuestionGenerationParameters] = None) -> Dict[str, Any]:
     """Start question generation task - READ-ONLY database access"""
     print(f"start_question_generation_task called for job {job_id}")
     # Use webhook URL from environment
     current_webhook_url = webhook_url
 
     try:
-        if not segmentMap:
+        if not file:
             error_msg = f"No segments found for job {job_id}. Check usePrevious index and segmentation task status."
             print(error_msg)
             raise ValueError(error_msg)
@@ -244,7 +262,12 @@ async def start_question_generation_task(job_id: str, segmentMap, approval_data:
             current_webhook_url = "http://" + current_webhook_url
             
         storage_service = GCloudStorageService()
-    
+        response = requests.get(file)
+        response.raise_for_status()
+        transcript = response.text
+        # convert json to dict
+        transcript = json.loads(transcript)
+        segments = map_transcript_to_segments(transcript['chunks'], segmentMap)
         # Send webhook - Starting question generation
         question_gen_data = QuestionGenerationData(status=TaskStatus.RUNNING)
         await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
@@ -253,7 +276,7 @@ async def start_question_generation_task(job_id: str, segmentMap, approval_data:
         print("Generating questions...")
         question_service = QuestionGenerationService()
         questions = await question_service.generate_questions(
-            segments=segmentMap,
+            segments=segments,
             question_params=approval_data,
         )
         questions = [json.loads(q) for q in questions]

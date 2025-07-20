@@ -1,12 +1,9 @@
+import os
 from typing import Dict, List, Optional, TYPE_CHECKING, Sequence
 import numpy as np
+from fastapi import HTTPException
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
-import numba
-from torch import cosine_similarity
-from sklearn.metrics.pairwise import cosine_similarity
-numba.config.THREADING_LAYER = "omp"
-
 
 if TYPE_CHECKING:
     from models import SegmentationParameters
@@ -16,6 +13,9 @@ from models import SegmentResponse, Transcript, TranscriptSegment
 
 class SegmentationService:
     """Service for segmenting transcripts into meaningful subtopics"""
+    
+    def __init__(self):
+        self.ollama_api_base_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api")
     
     async def run_bertopic(self, topic_model: BERTopic, sentences: List[str], embeddings: any) -> any:
         topics, _ = topic_model.fit_transform(sentences, embeddings)
@@ -58,27 +58,27 @@ consensus_boundaries
     * noise_id : int        label used for "noise"/outlier sentences
     * returns  : List[int]  boundary vector, 1 means "segment starts here"
     """
-    
+
     # ---------------------------------------------------------------------
     # --------------  0.  tiny clean-up to remove -1 noise labels  ---------
     # ---------------------------------------------------------------------
-    async def fix_noise(self, labels: List[int], embeddings: np.ndarray) -> List[int]:
-        """Replace noise labels with contextually similar topic"""
-        unique_topics = set(labels)
-        if -1 not in unique_topics:
-            return labels
-            
-        # Create topic similarity matrix using embeddings
-        topic_centroids = np.array([np.mean(embeddings[np.array(labels) == t], axis=0) 
-                                for t in unique_topics if t != -1])
-        
-        # Replace noise points with most similar topic
-        for i, label in enumerate(labels):
-            if label == -1:
-                similarities = cosine_similarity([embeddings[i]], topic_centroids)
-                labels[i] = list(unique_topics)[np.argmax(similarities)]
-                
-        return labels
+    async def fix_noise(self, labels: Sequence[int], noise_id: int) -> List[int]:
+        """consensus_boundaries
+        Replace every occurrence of *noise_id* with the most recent
+        *non-noise* topic so that the DP does not have to deal with '-1'.
+        """
+        fixed: List[int] = []
+        prev_valid = None
+        for z in labels:
+            if z == noise_id:
+                # if we have seen a real topic before, reuse it; otherwise 0
+                fixed.append(prev_valid if prev_valid is not None else 0)
+            else:
+                fixed.append(z)
+                prev_valid = z
+        return fixed
+
+
     # ---------------------------------------------------------------------
     # --------------  1.  build prefix topic counts (O(n·|T|)) -------------
     # ---------------------------------------------------------------------
@@ -101,9 +101,7 @@ consensus_boundaries
     # ---------------------------------------------------------------------
     # --------------  2.  dynamic-programming segmentation  ----------------
     # ---------------------------------------------------------------------
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    async def dp_segment(self, labels: List[int], embeddings, noise_id: int, lam: float, similarity_threshold=0.75) -> List[int]:
+    async def dp_segment(self, labels: List[int], lam: float, noise_id: int) -> List[int]:
         """
         Perform DP segmentation and return a *boundary vector* of the
         same length as `labels`.  Entry i == 1  ⇒  sentence i starts a segment.
@@ -125,25 +123,14 @@ consensus_boundaries
             max_same_topic = max(freq[t][j] - freq[t][i] for t in topics)
             return span_len - max_same_topic          # disagreement count
 
-        def adjust_lambda(lam: float, i: int, j: int) -> float:
-            """
-            Adjust lambda based on the length of the segment.
-            """
-            span_len = j - i
-            if span_len >= 240:
-                return lam * 2.0
-            elif span_len <= 120:
-                return lam * 2.0
-            return lam
-
         # -- Step 2  dynamic programme -----------------------------------------
         dp = [float("inf")] * (n + 1)                 # best cost for prefix 0…j
         back = [0] * (n + 1)                          # best predecessor index
-        dp[0] = -2*lam                                  # so first segment pays +λ once
-    
+        dp[0] = -lam                                  # so first segment pays +λ once
+
         for j in range(1, n + 1):                     # end position (exclusive)
             for i in range(j):                        # candidate previous cut
-                cost = dp[i] + span_cost(i, j) + adjust_lambda(lam, i, j)  # block cost + λ
+                cost = dp[i] + span_cost(i, j) + lam  # block cost + λ
                 if cost < dp[j]:
                     dp[j] = cost
                     back[j] = i
@@ -155,19 +142,9 @@ consensus_boundaries
             i = back[k]
             boundaries[i] = 1                         # sentence i starts segment
             k = i                                     # jump to previous cut
-        
-        # Post-processing merging based on similarity
-        for i in range(1, len(embeddings) - 1):
-            # Check if both current and next sentence are not segment boundaries
-            if boundaries[i] == 0 and boundaries[i + 1] == 0:
-                sim = cosine_similarity([embeddings[i]], [embeddings[i + 1]])[0][0]
-                if sim > similarity_threshold:
-                    # Merge by removing the boundary at i+1
-                    boundaries[i + 1] = 0
-
         return boundaries
 
-    async def consensus_boundaries(self, boundary_runs, min_sep, method):
+    async def consensus_boundaries(self, boundary_runs, min_sep=3, method="topk"):
         """
         Fuse N binary boundary vectors into one consensus vector.
 
@@ -218,7 +195,7 @@ consensus_boundaries
         return consensus, p
     
     # Add intermediate segments to reduce large gaps
-    async def add_intermediate_segments(self, segment_indices, chunks: List[TranscriptSegment], max_gap_seconds):
+    async def add_intermediate_segments(self, segment_indices, chunks: List[TranscriptSegment], max_gap_seconds=300):
         """Add intermediate segments if gaps are too large (>5 minutes)"""
         new_indices = list(segment_indices)
         
@@ -253,23 +230,23 @@ consensus_boundaries
         Segment transcript into meaningful subtopics using LLM
         Returns: Dictionary with end_time as key and cleaned transcript as value
         """
-        print("Segmentation params given:", segmentation_params.lam, segmentation_params.runs, segmentation_params.noiseId)
         # Extract model from parameters or use default
-        lam = 2.0
-        runs = 25
-        noise_id = -1
+        lambda_param = 3.5
+        runs_param = 25
+        noise_id_param = -1
 
         if segmentation_params and segmentation_params.lam:
-            lam = segmentation_params.lam
+            lambda_param = segmentation_params.lam
         if segmentation_params and segmentation_params.runs:
-            runs = segmentation_params.runs
+            runs_param = segmentation_params.runs
         if segmentation_params and segmentation_params.noiseId:
-            noise_id = segmentation_params.noiseId
+            noise_id_param = segmentation_params.noiseId
 
-        print(f"Segmentation parameters: lambda={lam}, runs={runs}, noise_id={noise_id}")
-        
         if not transcript:
-            raise ValueError("Transcript text is required and must be a non-empty string.")
+            raise HTTPException(
+                status_code=400,
+                detail="Transcript text is required and must be a non-empty string."
+            )
 
         chunks = transcript.chunks
 
@@ -286,9 +263,9 @@ consensus_boundaries
         # Run BERTopic multiple times for consensus
         boundary_runs = []
 
-        for _ in range(runs):
+        for _ in range(runs_param):
             topics = await self.run_bertopic(topic_model, sentences, embeddings)
-            boundaries = await self.dp_segment(topics, embeddings, noise_id, lam=lam, similarity_threshold=0.75)
+            boundaries = await self.dp_segment(topics, lambda_param, noise_id_param)
             boundary_runs.append(np.array(boundaries))
         
         # Get consensus boundaries
@@ -319,15 +296,16 @@ consensus_boundaries
             # Use the endtime of the last chunk in the segment as the key
             last_chunk = chunks[end_idx - 1]
             # Handle the timestamp format: [start_time, end_time]
-            if last_chunk.timestamp and isinstance(last_chunk.timestamp, list) and len(last_chunk.timestamp) == 2:
+            if last_chunk.timestamp and len(last_chunk.timestamp) == 2:
                 endtime = last_chunk.timestamp[1]  # Get end_time from timestamp array
             else:
-                raise ValueError(f"Invalid timestamp format for chunk {last_chunk}. Expected [start_time, end_time] array.")
-            
+                raise ValueError("Invalid timestamp format in chunk.")
             # Clean up the segment text
             segment_text = segment_text.strip()
             
             segments[str(endtime)] = segment_text
-            print("Segment created:", segments)
-        
-        return SegmentResponse(segments=segments, segment_count=len(segment_start_indices))
+            
+        sorted_endtimes = sorted([float(k) for k in segments.keys()])
+        print("Sorted segments:", sorted_endtimes)
+
+        return SegmentResponse(complete_segments=segments, segments=sorted_endtimes, segment_count=len(segment_start_indices))

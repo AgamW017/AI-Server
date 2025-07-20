@@ -40,7 +40,7 @@ class QuestionGenerationService:
         
         return text
 
-    def create_question_prompt(self, question_type: str, count: int, transcript_content: str) -> str:
+    def create_question_prompt(self, question_type: str, count: int, transcript_content: str, base_prompt: str) -> str:
         """Create a prompt for question generation based on type and content"""
         base_prompt = f"""Based on the following transcript content, generate {count} educational question(s) of type {question_type}.
 
@@ -48,12 +48,7 @@ Transcript content:
 {transcript_content}
 
 Each question should:
-- Focus on conceptual understanding
-- Test comprehension of key ideas, principles, and relationships discussed in the content
-- Avoid quesitons that require memorizing exact numerical values, dates, or statistics mentioned in the content
-- The answer of questions should be present within the content, but not directly quoted
-- make all the options roughly the same length
-- Set isParameterized to false unless the question uses variables
+{base_prompt}
 
 """
 
@@ -119,13 +114,25 @@ Each question should:
         Generate questions based on segments and question specifications
         """
         model = question_params.model if question_params and question_params.model else "deepseek-r1:70b"
+        if model == 'default':
+            model = "deepseek-r1:70b"
         question_specs = {
             "SOL": question_params.SOL if question_params and question_params.SOL else 2,
             "SML": question_params.SML if question_params and question_params.SML else 2,
             "NAT": question_params.NAT if question_params and question_params.NAT else 0,
             "DES": question_params.DES if question_params and question_params.DES else 0,
         }
-        
+        base_prompt = """
+- Focus on conceptual understanding
+- Test comprehension of key ideas, principles, and relationships discussed in the content
+- Avoid questions that require memorizing exact numerical values, dates, or statistics mentioned in the content
+- The answer of questions should be present within the content, but not directly quoted
+- make all the options roughly the same length
+- Set isParameterized to false unless the question uses variables
+- Do not mention the word "transcript" for giving references, use the word "video" instead
+        """
+        if question_params and question_params.prompt:
+            base_prompt = question_params.prompt
         if not segments or not isinstance(segments, dict) or not segments:
             raise HTTPException(
                 status_code=400,
@@ -157,7 +164,7 @@ Each question should:
                                 "maxItems": count,
                             }
 
-                        prompt = self.create_question_prompt(question_type, count, segment_transcript)
+                        prompt = self.create_question_prompt(question_type, count, segment_transcript, base_prompt)
 
                         payload = {
                             "model": model,
@@ -178,7 +185,19 @@ Each question should:
                         if response.json() and isinstance(response.json().get('response'), str):
                             generated_text = response.json()['response']
                             cleaned_json_text = self.extract_json_from_markdown(generated_text)
-                            all_generated_questions.append(cleaned_json_text)
+                            try:
+                                questions = json.loads(cleaned_json_text)
+                                if isinstance(questions, list):
+                                    for q in questions:
+                                        q["segmentId"] = segment_id
+                                        q["questionType"] = question_type
+                                elif isinstance(questions, dict):
+                                    questions["segmentId"] = segment_id
+                                    questions["questionType"] = question_type
+                                # Convert back to string before appending
+                                all_generated_questions.append(json.dumps(questions, ensure_ascii=False))
+                            except Exception as error:
+                                print(f"Error parsing or annotating questions for {question_type} in segment {segment_id}: {error}")
                             
                         else:
                           print(f"No response data or response.response is not a string for {question_type} in segment {segment_id}")

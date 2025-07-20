@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field
 from enum import Enum
 from datetime import datetime
 
@@ -32,6 +32,7 @@ class QuestionGenerationParameters(BaseModel):
     SML: Optional[int] = None
     NAT: Optional[int] = None
     DES: Optional[int] = None
+    prompt: Optional[str] = None
 
 class TaskStatus(str, Enum):
     PENDING = 'PENDING'
@@ -79,7 +80,8 @@ class TranscriptGenerationData(BaseModel):
 class SegmentationData(BaseModel):
     status: TaskStatus
     error: Optional[str] = None
-    segmentationMap: Optional[Dict[str, str]] = None
+    segmentationMap: Optional[List[float]] = None
+    transcriptFileUrl: Optional[str] = None
     parameters: Optional[SegmentationParameters] = None
     
     def dict(self, **kwargs):
@@ -92,7 +94,7 @@ class QuestionGenerationData(BaseModel):
     error: Optional[str] = None
     fileName: Optional[str] = None
     fileUrl: Optional[str] = None
-    segmentMapUsed: Optional[Dict[str, str]] = None
+    segmentMapUsed: Optional[List[float]] = None
     parameters: Optional[QuestionGenerationParameters] = None
     
     def dict(self, **kwargs):
@@ -172,7 +174,7 @@ class SegmentationRequest(BaseModel):
     model: Optional[str] = "gemma3"
 
 class QuestionGenerationRequest(BaseModel):
-    segments: Dict[str, str]
+    segments: List[float]
     globalQuestionSpecification: list[Dict[str, int]]
     model: Optional[str] = "gemma3"
 
@@ -183,12 +185,12 @@ class JobState(BaseModel):
     url: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
     file: Optional[str] = None
-    segmentMap: Optional[Dict[str, str]] = None
-    
+    segmentMap: Optional[List[float]] = None
+
 class Transcript(BaseModel):
-    text: str
     chunks: List[TranscriptSegment] = []
 
 class SegmentResponse(BaseModel):
-    segments: dict
+    complete_segments: Dict[str, str]
+    segments: List[float]
     segment_count: int

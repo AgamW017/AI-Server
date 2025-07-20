@@ -135,7 +135,7 @@ class GCloudStorageService:
         Returns:
             Public URL of the uploaded JSON or None if upload failed
         """
-        json_content = json.dumps(data, indent=2, ensure_ascii=False)
+        json_content = json.dumps(data)
         return await self.upload_text_content(json_content, destination_name, 'application/json')
 
     def get_file_url(self, file_name: str) -> str:

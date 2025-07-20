@@ -91,9 +91,10 @@ async def approve_task_start(
         return JobResponse(message="Segmentation task started")
     elif current_task == "SEGMENTATION":
         # Start question generation task - needs parameters only
+        file_url = taskData.file if hasattr(taskData, 'file') else None
         print(f"Starting question generation task for job {jobId}")
         params = QuestionGenerationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, params)
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
         return JobResponse(message="Question generation task started")
     elif current_task == "QUESTION_GENERATION":
         # Question generation is the final task - no more tasks after this
@@ -132,8 +133,9 @@ async def rerun_task(
         background_tasks.add_task(run_async_task, start_segmentation_task, jobId, file_url, params)
         return JobResponse(message="Segmentation task restarted", jobId=jobId)
     elif current_task == "QUESTION_GENERATION":
+        file_url = taskData.file if hasattr(taskData, 'file') else None
         params = QuestionGenerationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, params)
+        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
         return JobResponse(message="Question generation task restarted", jobId=jobId)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
