@@ -1,14 +1,11 @@
 import os
-from typing import Dict, List, Optional, TYPE_CHECKING, Sequence
+from typing import Dict, List, Optional, Sequence
 import numpy as np
 from fastapi import HTTPException
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
 
-if TYPE_CHECKING:
-    from models import SegmentationParameters
-
-from models import SegmentResponse, Transcript, TranscriptSegment
+from models import SegmentResponse, Transcript, TranscriptSegment, SegmentationParameters
 
 
 class SegmentationService:
@@ -225,7 +222,7 @@ consensus_boundaries
         
         return np.sort(np.array(new_indices))
 
-    async def segment_transcript(self, transcript: Transcript, segmentation_params: Optional['SegmentationParameters'] = None) -> SegmentResponse:
+    async def segment_transcript(self, transcript: Transcript, segmentation_params: Optional[SegmentationParameters] = None) -> SegmentResponse:
         """
         Segment transcript into meaningful subtopics using LLM
         Returns: Dictionary with end_time as key and cleaned transcript as value
@@ -239,8 +236,8 @@ consensus_boundaries
             lambda_param = segmentation_params.lam
         if segmentation_params and segmentation_params.runs:
             runs_param = segmentation_params.runs
-        if segmentation_params and segmentation_params.noiseId:
-            noise_id_param = segmentation_params.noiseId
+        if segmentation_params and segmentation_params.noise_id:
+            noise_id_param = segmentation_params.noise_id
 
         if not transcript:
             raise HTTPException(

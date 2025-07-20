@@ -1,13 +1,12 @@
 import json
 import re
 import os
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional
 import requests
 from fastapi import HTTPException
 from schema import SOL_SCHEMA, SML_SCHEMA, OTL_SCHEMA, NAT_SCHEMA, DES_SCHEMA
 
-if TYPE_CHECKING:
-    from models import QuestionGenerationParameters
+from models import QuestionGenerationParameters
 
 class QuestionGenerationService:
     """Service for generating questions from transcript segments"""
