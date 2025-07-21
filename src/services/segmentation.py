@@ -120,14 +120,22 @@ consensus_boundaries
             max_same_topic = max(freq[t][j] - freq[t][i] for t in topics)
             return span_len - max_same_topic          # disagreement count
 
+        def calc_lambda(i: int, j: int, lam: float) -> float:
+            span_len = j - i
+            if span_len < 60:
+                return 2 * lam
+            if span_len > 240:
+                return 2 * lam
+            return lam
+
         # -- Step 2  dynamic programme -----------------------------------------
         dp = [float("inf")] * (n + 1)                 # best cost for prefix 0…j
         back = [0] * (n + 1)                          # best predecessor index
-        dp[0] = -lam                                  # so first segment pays +λ once
+        dp[0] = - 2 * lam                             # so first segment pays +λ once
 
         for j in range(1, n + 1):                     # end position (exclusive)
             for i in range(j):                        # candidate previous cut
-                cost = dp[i] + span_cost(i, j) + lam  # block cost + λ
+                cost = dp[i] + span_cost(i, j) + calc_lambda(i, j, lam)  # block cost + λ
                 if cost < dp[j]:
                     dp[j] = cost
                     back[j] = i
