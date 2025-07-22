@@ -244,8 +244,8 @@ consensus_boundaries
             lambda_param = segmentation_params.lam
         if segmentation_params and segmentation_params.runs:
             runs_param = segmentation_params.runs
-        if segmentation_params and segmentation_params.noise_id:
-            noise_id_param = segmentation_params.noise_id
+        if segmentation_params and segmentation_params.noiseId:
+            noise_id_param = segmentation_params.noiseId
 
         if not transcript:
             raise HTTPException(
