@@ -9,4 +9,5 @@ google-cloud-storage>=3.2.0
 httpx>=0.28.1
 bertopic>=0.17.3
 tbb>=2022.2.0
+sentry-sdk[fastapi]
 # sudo apt install ffmpeg

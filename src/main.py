@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -10,7 +11,12 @@ load_dotenv()
 
 from routes import router
 from middleware.error_logging import ErrorLoggingMiddleware
+import sentry_sdk
 
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    send_default_pii=True,
+)
 # Create FastAPI app
 app = FastAPI(
     title="AI Server",
@@ -72,6 +78,13 @@ async def root():
 async def health_check():
     """Simple health check"""
     return {"status": "healthy"}
+
+
+@app.get("/sentry-debug")
+async def sentry_debug():
+    """Endpoint to trigger a test error for Sentry integration"""
+    division_by_zero = 1 / 0  # This will raise ZeroDivisionError
+    return {"message": "This should never be returned."}
 
 
 if __name__ == "__main__":
