@@ -1,3 +1,4 @@
+import asyncio
 import json
 import requests
 import os
@@ -33,6 +34,9 @@ if not WEBHOOK_SECRET:
 # Now we can safely use these as strings
 webhook_url: str = WEBHOOK_URL
 webhook_secret: str = WEBHOOK_SECRET
+
+# Global dictionary to track service instances for cancellation
+active_services = {}
 
 # Note: Removed the old JobState class and process_video_async function
 # as they used in-memory job_states which is now replaced with MongoDB persistence
@@ -275,60 +279,86 @@ async def start_question_generation_task(job_id: str, segmentMap, file, approval
         # Generate questions from segments
         print("Generating questions...")
         question_service = QuestionGenerationService()
-        questions = await question_service.generate_questions(
-            segments=segments,
-            question_params=approval_data,
-        )
-        questions = [json.loads(q) for q in questions]
-        questions = [i for s in questions for i in s]
-        # Upload questions to Google Cloud Storage
-        run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
-        questions_file_name = f"questions/{job_id}_{run_id}_questions.json"
-        questions_file_url = await storage_service.upload_json_content(questions, questions_file_name)
         
-        # Send webhook - Question generation completed
-        if questions and len(questions) > 0:
-            question_gen_data = QuestionGenerationData(
-                status=TaskStatus.COMPLETED,
-                fileName=questions_file_name if questions_file_url else None,
-                fileUrl=questions_file_url,
-                segmentMapUsed=segmentMap,
-                parameters=approval_data
-            )
-            
-            # Note: Job status updates are handled by the external system, not this read-only service
-            
-            await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
-            
-            return {
-                "status": "COMPLETED",
-                "next_task": None,
-                "data": question_gen_data
-            }
-        else:
-            question_gen_data = QuestionGenerationData(
-                status=TaskStatus.FAILED,
-                error="No questions were generated"
-            )
-            # Note: Job status updates are handled by the external system, not this read-only service
-            
-            await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
-            
-            return {
-                "status": "COMPLETED",
-                "next_task": None,
-                "data": question_gen_data
-            }
+        # Store service instance for potential cancellation
+        active_services[job_id] = question_service
         
+        try:
+            questions = await question_service.generate_questions(
+                segments=segments,
+                question_params=approval_data,
+                job_id=job_id  # Pass job_id separately
+            )
+            questions = [json.loads(q) for q in questions]
+            questions = [i for s in questions for i in s]
+            # Upload questions to Google Cloud Storage
+            run_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID for uniqueness
+            questions_file_name = f"questions/{job_id}_{run_id}_questions.json"
+            questions_file_url = await storage_service.upload_json_content(questions, questions_file_name)
+            
+            # Send webhook - Question generation completed
+            if questions and len(questions) > 0:
+                question_gen_data = QuestionGenerationData(
+                    status=TaskStatus.COMPLETED,
+                    fileName=questions_file_name if questions_file_url else None,
+                    fileUrl=questions_file_url,
+                    segmentMapUsed=segmentMap,
+                    parameters=approval_data
+                )
+                
+                # Note: Job status updates are handled by the external system, not this read-only service
+                
+                await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
+                
+                return {
+                    "status": "COMPLETED",
+                    "next_task": None,
+                    "data": question_gen_data
+                }
+            else:
+                question_gen_data = QuestionGenerationData(
+                    status=TaskStatus.FAILED,
+                    error="No questions were generated"
+                )
+                # Note: Job status updates are handled by the external system, not this read-only service
+                
+                await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", question_gen_data)
+                
+                return {
+                    "status": "COMPLETED",
+                    "next_task": None,
+                    "data": question_gen_data
+                }
+        finally:
+            # Clean up service reference
+            if job_id in active_services:
+                del active_services[job_id]
+        
+    except asyncio.CancelledError:
+        print(f"Question generation task cancelled for job {job_id}")
+        # Clean up service if it exists
+        if job_id in active_services:
+            active_services[job_id].cancel_generation(job_id)
+            del active_services[job_id]
+        raise
     except Exception as e:
         print(f"Error in question generation: {str(e)}")
-        # Note: Job status updates are handled by the external system, not this read-only service
+        # Clean up service if it exists
+        if job_id in active_services:
+            del active_services[job_id]
         
         error_data = QuestionGenerationData(status=TaskStatus.FAILED, error=str(e))
-        # Note: Job status updates are handled by the external system, not this read-only service
-        
         await send_webhook(current_webhook_url, job_id, webhook_secret, "QUESTION_GENERATION", error_data)
         raise
+
+def cancel_active_services(job_id: str):
+    """Cancel any active services for a job"""
+    if job_id in active_services:
+        service = active_services[job_id]
+        if hasattr(service, 'cancel_generation'):
+            service.cancel_generation(job_id)
+        del active_services[job_id]
+        print(f"Cancelled active services for job {job_id}")
 
 async def send_webhook(webhook_url: str, job_id: str, webhook_secret: str, task: str, data):
     """Send webhook notification"""
@@ -355,6 +385,9 @@ async def send_webhook(webhook_url: str, job_id: str, webhook_secret: str, task:
         response = requests.post(webhook_url, json=webhook_data, headers=headers, timeout=10)
         print(f"Webhook response: {response.status_code}")
         response.raise_for_status()
+    except Exception as e:
+        print(f"Error sending webhook: {str(e)}")
+        # Don't raise the error, just log it
     except Exception as e:
         print(f"Error sending webhook: {str(e)}")
         # Don't raise the error, just log it

@@ -6,7 +6,8 @@ from ai import (
     start_audio_extraction_task,
     start_transcript_generation_task,
     start_segmentation_task,
-    start_question_generation_task
+    start_question_generation_task,
+    cancel_active_services
 )
 from models import (
     JobResponse,
@@ -122,6 +123,9 @@ async def abort_task(jobId: str):
     """Immediately abort the currently running task for a job"""
     print(f"Abort requested for job {jobId}")
     
+    # Cancel any active services first (like Ollama requests)
+    cancel_active_services(jobId)
+    
     if jobId not in running_tasks:
         raise HTTPException(status_code=404, detail=f"No running task found for job {jobId}")
     
@@ -149,7 +153,7 @@ async def rerun_task(
     task_status = taskData.taskStatus
     print('file:', taskData.file if hasattr(taskData, 'file') else None)
     print('parameters:', taskData.parameters if hasattr(taskData, 'parameters') else None)
-    if task_status not in ["COMPLETED", "FAILED"]:
+    if task_status not in ["COMPLETED", "FAILED", "ABORTED"]:
         raise HTTPException(status_code=400, detail=f"Current task {current_task} is not completed (status: {task_status})")
     
     if current_task == "AUDIO_EXTRACTION":
