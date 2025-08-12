@@ -15,6 +15,7 @@ import sentry_sdk
 
 sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
+    environment=os.getenv("ENVIRONMENT", "development"),
     send_default_pii=True,
 )
 # Create FastAPI app
@@ -91,7 +92,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8017,
+        port=9017,
         reload=True,
         log_level="info"
     )

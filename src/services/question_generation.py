@@ -115,12 +115,14 @@ Each question should:
         model = question_params.model if question_params and question_params.model else "deepseek-r1:70b"
         if model == 'default':
             model = "deepseek-r1:70b"
+        print(question_params)
         question_specs = {
-            "SOL": question_params.SOL if question_params and question_params.SOL else 2,
-            "SML": question_params.SML if question_params and question_params.SML else 2,
-            "NAT": question_params.NAT if question_params and question_params.NAT else 0,
-            "DES": question_params.DES if question_params and question_params.DES else 0,
+            "SOL": question_params.SOL if question_params and question_params.SOL is not None else 2,
+            "SML": question_params.SML if question_params and question_params.SML is not None else 2,
+            "NAT": question_params.NAT if question_params and question_params.NAT is not None else 0,
+            "DES": question_params.DES if question_params and question_params.DES is not None else 0,
         }
+        print(question_specs)
         base_prompt = """
 - Focus on conceptual understanding
 - Test comprehension of key ideas, principles, and relationships discussed in the content

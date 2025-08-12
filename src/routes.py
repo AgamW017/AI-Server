@@ -15,35 +15,49 @@ from models import (
     TranscriptParameters,
     QuestionGenerationParameters
 )
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
-def run_async_task_in_thread(async_func, *args, **kwargs):
+# Global dictionary to track running tasks
+running_tasks = {}
+
+def run_async_task(job_id, async_func, *args, **kwargs):
     """Helper function to run async tasks in a new thread with its own event loop"""
     def run_in_thread():
         try:
-            print(f"Starting background task: {async_func.__name__}")
+            print(f"Starting background task: {async_func.__name__} for job {job_id}")
             # Create a new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            
+            # Create a task and store it for potential cancellation
+            task = loop.create_task(async_func(*args, **kwargs))
+            running_tasks[job_id] = task
+            
             try:
-                result = loop.run_until_complete(async_func(*args, **kwargs))
-                print(f"Background task completed successfully: {async_func.__name__}")
+                result = loop.run_until_complete(task)
+                print(f"Background task completed successfully: {async_func.__name__} for job {job_id}")
                 return result
             finally:
+                # Clean up the task reference
+                if job_id in running_tasks:
+                    del running_tasks[job_id]
                 loop.close()
+        except asyncio.CancelledError:
+            print(f"Task cancelled for job {job_id}")
+            if job_id in running_tasks:
+                del running_tasks[job_id]
         except Exception as e:
-            print(f"Error in background task {async_func.__name__}: {str(e)}")
+            print(f"Error in background task {async_func.__name__} for job {job_id}: {str(e)}")
             import traceback
             traceback.print_exc()
+            if job_id in running_tasks:
+                del running_tasks[job_id]
             raise
     
     # Run in a separate thread
     thread = threading.Thread(target=run_in_thread)
     thread.start()
-
-def run_async_task(async_func, *args, **kwargs):
-    """Helper function to run async tasks in background"""
-    return run_async_task_in_thread(async_func, *args, **kwargs)
 
 @router.post("/{jobId}/tasks/approve/start", response_model=JobResponse)
 async def approve_task_start(
@@ -73,34 +87,55 @@ async def approve_task_start(
         # Start audio extraction task - needs job_data object with url
         print(f"Starting audio extraction task for job {jobId}")
         job_data_obj = type('JobData', (), {'url': taskData.url if hasattr(taskData, 'url') else None})()
-        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, job_data_obj.url)
+        background_tasks.add_task(run_async_task, jobId, start_audio_extraction_task, jobId, job_data_obj.url)
         return JobResponse(message="Audio extraction task started")
     elif current_task == "AUDIO_EXTRACTION":
         # Start transcript generation task - needs file and parameters
         file_url = taskData.file if hasattr(taskData, 'file') else None
         print(f"Starting transcript generation task for job {jobId}")
         params = TranscriptParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_transcript_generation_task, jobId, file_url, params)
         return JobResponse(message="Transcript generation task started")
     elif current_task == "TRANSCRIPT_GENERATION":
         # Start segmentation task - needs parameters only
         file_url = taskData.file if hasattr(taskData, 'file') else None
         print(f"Starting segmentation task for job {jobId}")
         params = SegmentationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_segmentation_task, jobId, file_url, params)
         return JobResponse(message="Segmentation task started")
     elif current_task == "SEGMENTATION":
         # Start question generation task - needs parameters only
         file_url = taskData.file if hasattr(taskData, 'file') else None
         print(f"Starting question generation task for job {jobId}")
         params = QuestionGenerationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
         return JobResponse(message="Question generation task started")
     elif current_task == "QUESTION_GENERATION":
         # Question generation is the final task - no more tasks after this
         raise HTTPException(status_code=400, detail="Question generation is the final task. No more tasks available.")
     else:
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
+
+
+@router.post("/{jobId}/abort", response_model=JobResponse)
+async def abort_task(jobId: str):
+    """Immediately abort the currently running task for a job"""
+    print(f"Abort requested for job {jobId}")
+    
+    if jobId not in running_tasks:
+        raise HTTPException(status_code=404, detail=f"No running task found for job {jobId}")
+    
+    task = running_tasks[jobId]
+    if task.done():
+        # Task already completed
+        del running_tasks[jobId]
+        raise HTTPException(status_code=400, detail=f"Task for job {jobId} has already completed")
+    
+    # Cancel the task
+    task.cancel()
+    print(f"Task cancelled for job {jobId}")
+    
+    return JobResponse(message=f"Task for job {jobId} has been aborted", jobId=jobId)
 
 
 @router.post("/{jobId}/tasks/rerun", response_model=JobResponse)
@@ -119,23 +154,23 @@ async def rerun_task(
     
     if current_task == "AUDIO_EXTRACTION":
         job_data_obj = type('JobData', (), {'url': taskData.url if hasattr(taskData, 'url') else None})()
-        background_tasks.add_task(run_async_task, start_audio_extraction_task, jobId, job_data_obj.url)
+        background_tasks.add_task(run_async_task, jobId, start_audio_extraction_task, jobId, job_data_obj.url)
         return JobResponse(message="Audio extraction task restarted", jobId=jobId)
     elif current_task == "TRANSCRIPT_GENERATION":
         file_url = taskData.file if hasattr(taskData, 'file') else None
         params = TranscriptParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
         print(params)
-        background_tasks.add_task(run_async_task, start_transcript_generation_task, jobId, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_transcript_generation_task, jobId, file_url, params)
         return JobResponse(message="Transcript generation task restarted", jobId=jobId)
     elif current_task == "SEGMENTATION":
         file_url = taskData.file if hasattr(taskData, 'file') else None
         params = SegmentationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_segmentation_task, jobId, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_segmentation_task, jobId, file_url, params)
         return JobResponse(message="Segmentation task restarted", jobId=jobId)
     elif current_task == "QUESTION_GENERATION":
         file_url = taskData.file if hasattr(taskData, 'file') else None
         params = QuestionGenerationParameters(**taskData.parameters) if hasattr(taskData, 'parameters') else None
-        background_tasks.add_task(run_async_task, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
+        background_tasks.add_task(run_async_task, jobId, start_question_generation_task, jobId, taskData.segmentMap, file_url, params)
         return JobResponse(message="Question generation task restarted", jobId=jobId)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown task: {current_task}")
