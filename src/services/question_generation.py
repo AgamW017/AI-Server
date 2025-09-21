@@ -22,7 +22,8 @@ class QuestionGenerationService:
             "SML": SML_SCHEMA,
             "OTL": OTL_SCHEMA,
             "NAT": NAT_SCHEMA,
-            "DES": DES_SCHEMA
+            "DES": DES_SCHEMA,
+            "BIN": SOL_SCHEMA
         }
 
     def extract_json_from_markdown(self, text: str) -> str:
@@ -54,12 +55,24 @@ Each question should:
 """
 
         type_specific_instructions = {
-            "SOL": """Create SELECT_ONE_IN_LOT questions (single correct answer multiple choice):
+                "BIN": """Create BINARY questions:
 - Focus on understanding concepts, principles, or cause-and-effect relationships
 - Avoid questions about specific numbers, percentages, or statistical data
 - Clear question text that tests comprehension of ideas
-- 3-4 incorrect options with explanations that address common misconceptions
+- 1 incorrect option with explanations that address common misconceptions
 - 1 correct option with explanation that reinforces the concept
+- Options should have text in the form of True/False or Yes/No
+- There should only be 2 options in total
+- Include a hint that points to the key concept or principle being tested
+- Set timeLimitSeconds to 60 and points to 5""",
+
+            "SOL": """Create SELECT_ONE_IN_LOT questions:
+- Focus on understanding concepts, principles, or cause-and-effect relationships
+- Avoid questions about specific numbers, percentages, or statistical data
+- Clear question text that tests comprehension of ideas
+- 3 or more incorrect option with explanations that address common misconceptions
+- 1 correct option with explanation that reinforces the concept
+- Total options should be atleast 3 and at max 6.
 - Include a hint that points to the key concept or principle being tested
 - Set timeLimitSeconds to 60 and points to 5""",
 
@@ -127,6 +140,7 @@ Each question should:
             print(question_params)
             question_specs = {
                 "SOL": question_params.SOL if question_params and question_params.SOL is not None else 2,
+                "BIN": question_params.BIN if question_params and question_params.BIN is not None else 2,
                 "SML": question_params.SML if question_params and question_params.SML is not None else 2,
                 "NAT": question_params.NAT if question_params and question_params.NAT is not None else 0,
                 "DES": question_params.DES if question_params and question_params.DES is not None else 0,

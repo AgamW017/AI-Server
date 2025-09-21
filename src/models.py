@@ -32,6 +32,7 @@ class QuestionGenerationParameters(BaseModel):
     SML: Optional[int] = None
     NAT: Optional[int] = None
     DES: Optional[int] = None
+    BIN: Optional[int] = None
     prompt: Optional[str] = None
 
 class TaskStatus(str, Enum):
