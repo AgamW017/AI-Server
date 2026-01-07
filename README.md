@@ -1,10 +1,10 @@
 # AI Server
 
-A FastAPI-based mock server that implements the AI server which comunicates with ViBe main server for gen AI tasks.
+A FastAPI-based server that implements the AI server which comunicates with ViBe main server for gen AI tasks.
 
 ## Features
 
-- Mock implementation of all required AI server endpoints
+- Runs AI Pipeline and communicates with main backend using WebHooks
 - Header-based authentication using webhook secrets
 - Comprehensive logging of all requests
 - CORS support for cross-origin requests
